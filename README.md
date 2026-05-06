@@ -56,3 +56,7 @@ python -m pytest -q
 python -m pytest -q tests/boundary
 git diff --check origin/main...HEAD
 ```
+
+## Evidence
+
+- [Read-only mart adapter proof, 2026-05-06](docs/evidence/read-only-mart-adapter-proof-20260506.md)
