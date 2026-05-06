@@ -17,13 +17,13 @@ class LineageSummary:
     source_mart: str | None = None
     source_window_start_date: str | None = None
     source_window_end_date: str | None = None
-    source_interface_ids_summary: tuple[str, ...] = ()
+    source_interface_ids: tuple[str, ...] = ()
     source_row_count: int | None = None
-    lineage_row_count: int | None = None
-    lineage_summary: str | None = None
-    source_run_ids_summary: tuple[str, ...] = ()
-    source_load_started_at: str | None = None
-    source_load_finished_at: str | None = None
+    source_lineage_row_count: int | None = None
+    source_lineage_summary: str | None = None
+    source_run_ids: tuple[str, ...] = ()
+    raw_loaded_at_min: str | None = None
+    raw_loaded_at_max: str | None = None
 
     def as_properties(self) -> dict[str, object]:
         properties: dict[str, object] = {
@@ -36,20 +36,18 @@ class LineageSummary:
             "source_window_start_date": self.source_window_start_date,
             "source_window_end_date": self.source_window_end_date,
             "source_row_count": self.source_row_count,
-            "lineage_row_count": self.lineage_row_count,
-            "lineage_summary": self.lineage_summary,
-            "source_load_started_at": self.source_load_started_at,
-            "source_load_finished_at": self.source_load_finished_at,
+            "source_lineage_row_count": self.source_lineage_row_count,
+            "source_lineage_summary": self.source_lineage_summary,
+            "raw_loaded_at_min": self.raw_loaded_at_min,
+            "raw_loaded_at_max": self.raw_loaded_at_max,
         }
         properties.update(
             {key: value for key, value in optional.items() if value is not None}
         )
-        if self.source_interface_ids_summary:
-            properties["source_interface_ids_summary"] = list(
-                self.source_interface_ids_summary
-            )
-        if self.source_run_ids_summary:
-            properties["source_run_ids_summary"] = list(self.source_run_ids_summary)
+        if self.source_interface_ids:
+            properties["source_interface_ids"] = list(self.source_interface_ids)
+        if self.source_run_ids:
+            properties["source_run_ids"] = list(self.source_run_ids)
         return properties
 
     def as_evidence_summary(self) -> str:
@@ -66,10 +64,10 @@ class LineageSummary:
             parts.append(f"source_window_end_date={self.source_window_end_date}")
         if self.source_row_count is not None:
             parts.append(f"source_row_count={self.source_row_count}")
-        if self.lineage_row_count is not None:
-            parts.append(f"lineage_row_count={self.lineage_row_count}")
-        if self.lineage_summary is not None:
-            parts.append(f"lineage_summary={self.lineage_summary}")
+        if self.source_lineage_row_count is not None:
+            parts.append(f"source_lineage_row_count={self.source_lineage_row_count}")
+        if self.source_lineage_summary is not None:
+            parts.append(f"source_lineage_summary={self.source_lineage_summary}")
         return "lineage:" + ";".join(parts)
 
 

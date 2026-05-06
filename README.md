@@ -11,7 +11,7 @@ PR1 scope:
 - Map `mart_deriv_fund_co_holding` security-pair rows to `CO_HOLDING` between the two security entities. The fake row keeps `report_date`, `security_id_left`, `security_id_right`, fund counts, `jaccard_score`, and `latest_announced_date`.
 - Map `mart_deriv_northbound_holding_z_score` rows to `NORTHBOUND_HOLD` between the holder and security entities. The fake row keeps the `security_id`, `holder_id`, `report_date`, `z_score_metric`, fixed `lookback_observations=8`, `window_start_date`, `window_end_date`, `observation_count`, metric stats, and `metric_z_score`.
 - Keep `mart_deriv_top_holder_qoq_change` rows as read-only PR1 input; PR1 does not submit top-holder relationship candidates. Audit records retain the full mart row fields and expanded derivation lineage summary.
-- Preserve provider-neutral derivation lineage in emitted payload properties, evidence, and producer context: source mart, source window bounds, source interface summary, source row counts, lineage row counts and summary, run id summary, and source load bounds.
+- Preserve provider-neutral derivation lineage in emitted payload properties, evidence, and producer context using data-platform field names: `source_mart`, `source_interface_ids`, `source_lineage_row_count`, `source_lineage_summary`, `source_run_ids`, `raw_loaded_at_min`, and `raw_loaded_at_max`. Producer context keeps the derivation mart and source shape separate from lineage source mart.
 
 Boundary:
 
