@@ -169,7 +169,9 @@ class HoldingsProducer:
             "properties": {
                 "report_date": row.report_date,
                 "z_score_metric": row.z_score_metric,
-                "lookback_window_days": row.lookback_window_days,
+                "lookback_observations": row.lookback_observations,
+                "window_start_date": row.window_start_date,
+                "window_end_date": row.window_end_date,
                 "observation_count": row.observation_count,
                 "metric_value": row.metric_value,
                 "metric_mean": row.metric_mean,
@@ -180,14 +182,22 @@ class HoldingsProducer:
             "evidence": [
                 row.evidence_ref,
                 (
-                    "mart_deriv_northbound_z_score:"
+                    "mart_deriv_northbound_holding_z_score:"
                     f"z_score_metric={row.z_score_metric};"
+                    f"lookback_observations={row.lookback_observations};"
+                    f"window_start_date={row.window_start_date};"
+                    f"window_end_date={row.window_end_date};"
+                    f"observation_count={row.observation_count};"
+                    f"metric_value={row.metric_value};"
+                    f"metric_mean={row.metric_mean};"
+                    f"metric_stddev={row.metric_stddev};"
                     f"metric_z_score={row.metric_z_score}"
                 ),
             ],
             "producer_context": {
                 "mart_row_id": row.row_id,
-                "source_shape": "mart_deriv_northbound_z_score",
+                "source_mart": "mart_deriv_northbound_holding_z_score",
+                "source_shape": "mart_deriv_northbound_holding_z_score",
             },
         }
         return payload

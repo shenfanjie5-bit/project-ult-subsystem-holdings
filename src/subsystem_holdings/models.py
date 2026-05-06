@@ -65,7 +65,9 @@ class NorthboundZScoreRow:
     holder_id: str
     report_date: str
     z_score_metric: ZScoreMetric
-    lookback_window_days: int
+    lookback_observations: int
+    window_start_date: str
+    window_end_date: str
     observation_count: int
     metric_value: float
     metric_mean: float

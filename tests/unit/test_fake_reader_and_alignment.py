@@ -19,6 +19,9 @@ def test_fake_reader_returns_expected_mart_shapes() -> None:
     assert northbound.row_id == "northbound-alpha"
     assert northbound.report_date == "2026-03-31"
     assert northbound.z_score_metric == "holding_ratio"
+    assert northbound.lookback_observations == 90
+    assert northbound.window_start_date == "2025-12-31"
+    assert northbound.window_end_date == "2026-03-31"
     assert northbound.metric_z_score == 2.4
 
 

@@ -56,7 +56,9 @@ def test_payloads_keep_holdings_mart_shapes() -> None:
     assert northbound["properties"] == {
         "report_date": "2026-03-31",
         "z_score_metric": "holding_ratio",
-        "lookback_window_days": 90,
+        "lookback_observations": 90,
+        "window_start_date": "2025-12-31",
+        "window_end_date": "2026-03-31",
         "observation_count": 63,
         "metric_value": 0.018,
         "metric_mean": 0.011,
@@ -71,7 +73,26 @@ def test_payloads_keep_holdings_mart_shapes() -> None:
     assert "trade_date" not in northbound["properties"]
     assert "z_score" not in northbound["properties"]
     assert "holding_ratio" not in northbound["properties"]
+    assert "lookback_window_days" not in northbound["properties"]
+    assert (
+        northbound["producer_context"]["source_shape"]
+        == "mart_deriv_northbound_holding_z_score"
+    )
+    assert (
+        northbound["producer_context"]["source_mart"]
+        == "mart_deriv_northbound_holding_z_score"
+    )
+    assert northbound["evidence"][1].startswith(
+        "mart_deriv_northbound_holding_z_score:"
+    )
     assert "z_score_metric=holding_ratio" in northbound["evidence"][1]
+    assert "lookback_observations=90" in northbound["evidence"][1]
+    assert "window_start_date=2025-12-31" in northbound["evidence"][1]
+    assert "window_end_date=2026-03-31" in northbound["evidence"][1]
+    assert "observation_count=63" in northbound["evidence"][1]
+    assert "metric_value=0.018" in northbound["evidence"][1]
+    assert "metric_mean=0.011" in northbound["evidence"][1]
+    assert "metric_stddev=0.0029" in northbound["evidence"][1]
     assert "metric_z_score=2.4" in northbound["evidence"][1]
 
 
