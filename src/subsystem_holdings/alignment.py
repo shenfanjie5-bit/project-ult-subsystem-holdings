@@ -44,6 +44,7 @@ def build_default_aligner() -> EntityAligner:
             },
             security_nodes={
                 "security-alpha": "ENT_SECURITY_ALPHA",
+                "security-beta": "ENT_SECURITY_BETA",
             },
         )
     )

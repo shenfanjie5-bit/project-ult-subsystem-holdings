@@ -6,6 +6,7 @@ from typing import Any, Literal, TypeAlias
 
 RelationType: TypeAlias = Literal["CO_HOLDING", "NORTHBOUND_HOLD"]
 AuditReason: TypeAlias = Literal["unresolved_holder", "unresolved_security", "read_only_input"]
+ZScoreMetric: TypeAlias = Literal["holding_amount", "holding_ratio"]
 
 
 @dataclass(frozen=True, slots=True)
@@ -45,11 +46,14 @@ class TopHolderQoQChange:
 @dataclass(frozen=True, slots=True)
 class FundCoHoldingRow:
     row_id: str
-    source_fund_id: str
-    target_fund_id: str
-    security_id: str
     report_date: str
-    co_holding_score: float
+    security_id_left: str
+    security_id_right: str
+    co_holding_fund_count: int
+    security_left_fund_count: int
+    security_right_fund_count: int
+    jaccard_score: float
+    latest_announced_date: str
     evidence_ref: str
     lineage: LineageSummary
 
@@ -57,11 +61,16 @@ class FundCoHoldingRow:
 @dataclass(frozen=True, slots=True)
 class NorthboundZScoreRow:
     row_id: str
-    holder_id: str
     security_id: str
-    trade_date: str
-    z_score: float
-    holding_ratio: float
+    holder_id: str
+    report_date: str
+    z_score_metric: ZScoreMetric
+    lookback_window_days: int
+    observation_count: int
+    metric_value: float
+    metric_mean: float
+    metric_stddev: float
+    metric_z_score: float
     evidence_ref: str
     lineage: LineageSummary
 

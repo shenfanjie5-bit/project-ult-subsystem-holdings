@@ -95,17 +95,17 @@ class HoldingsProducer:
         produced_at: datetime,
         audit: list[AuditRecord],
     ) -> Ex3Payload | None:
-        source = self.aligner.holder(row.source_fund_id)
-        target = self.aligner.holder(row.target_fund_id)
-        security = self.aligner.security(row.security_id)
+        source = self.aligner.security(row.security_id_left)
+        target = self.aligner.security(row.security_id_right)
         if not source.resolved:
-            audit.append(AuditRecord(row.row_id, "unresolved_holder", row.source_fund_id))
+            audit.append(
+                AuditRecord(row.row_id, "unresolved_security", row.security_id_left)
+            )
             return None
         if not target.resolved:
-            audit.append(AuditRecord(row.row_id, "unresolved_holder", row.target_fund_id))
-            return None
-        if not security.resolved:
-            audit.append(AuditRecord(row.row_id, "unresolved_security", row.security_id))
+            audit.append(
+                AuditRecord(row.row_id, "unresolved_security", row.security_id_right)
+            )
             return None
 
         payload: Ex3Payload = {
@@ -118,15 +118,26 @@ class HoldingsProducer:
             "target_node": target.node_id,
             "relation_type": "CO_HOLDING",
             "properties": {
-                "security_node": security.node_id,
                 "report_date": row.report_date,
-                "co_holding_score": row.co_holding_score,
+                "co_holding_fund_count": row.co_holding_fund_count,
+                "security_left_fund_count": row.security_left_fund_count,
+                "security_right_fund_count": row.security_right_fund_count,
+                "jaccard_score": row.jaccard_score,
+                "latest_announced_date": row.latest_announced_date,
                 "lineage": row.lineage.as_properties(),
             },
-            "evidence": [row.evidence_ref],
+            "evidence": [
+                row.evidence_ref,
+                (
+                    "mart_deriv_fund_co_holding:"
+                    f"co_holding_fund_count={row.co_holding_fund_count};"
+                    f"jaccard_score={row.jaccard_score};"
+                    f"latest_announced_date={row.latest_announced_date}"
+                ),
+            ],
             "producer_context": {
                 "mart_row_id": row.row_id,
-                "source_shape": "fund_co_holding",
+                "source_shape": "mart_deriv_fund_co_holding_security_pair",
             },
         }
         return payload
@@ -156,15 +167,27 @@ class HoldingsProducer:
             "target_node": security.node_id,
             "relation_type": "NORTHBOUND_HOLD",
             "properties": {
-                "trade_date": row.trade_date,
-                "z_score": row.z_score,
-                "holding_ratio": row.holding_ratio,
+                "report_date": row.report_date,
+                "z_score_metric": row.z_score_metric,
+                "lookback_window_days": row.lookback_window_days,
+                "observation_count": row.observation_count,
+                "metric_value": row.metric_value,
+                "metric_mean": row.metric_mean,
+                "metric_stddev": row.metric_stddev,
+                "metric_z_score": row.metric_z_score,
                 "lineage": row.lineage.as_properties(),
             },
-            "evidence": [row.evidence_ref],
+            "evidence": [
+                row.evidence_ref,
+                (
+                    "mart_deriv_northbound_z_score:"
+                    f"z_score_metric={row.z_score_metric};"
+                    f"metric_z_score={row.metric_z_score}"
+                ),
+            ],
             "producer_context": {
                 "mart_row_id": row.row_id,
-                "source_shape": "northbound_z_score",
+                "source_shape": "mart_deriv_northbound_z_score",
             },
         }
         return payload
