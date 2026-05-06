@@ -116,9 +116,28 @@ class ReadOnlyMartAdapter:
 
         lineages = self._lineage_by_key(TOP_HOLDER_QOQ_LINEAGE_MART)
         result: list[TopHolderQoQChange] = []
+        complete_change_fields = (
+            "previous_report_date",
+            "previous_announced_date",
+            "previous_holding_amount",
+            "holding_amount_delta",
+            "holding_amount_delta_pct",
+            "previous_holding_ratio",
+            "holding_ratio_delta",
+        )
         for row in rows:
             lineage = self._paired_lineage(TOP_HOLDER_QOQ_MART, row, lineages)
             if lineage is None:
+                continue
+            if _has_null(row, complete_change_fields):
+                self.diagnostics.append(
+                    AdapterDiagnostic(
+                        table=TOP_HOLDER_QOQ_MART,
+                        reason="incomplete_change_row",
+                        detail="top-holder quarter-over-quarter row has null change fields",
+                        row_key=str(row["mart_key"]),
+                    )
+                )
                 continue
             result.append(
                 TopHolderQoQChange(
@@ -396,3 +415,7 @@ def _string_tuple(value: Any) -> tuple[str, ...]:
     if isinstance(value, Iterable):
         return tuple(str(item) for item in value)
     return (str(value),)
+
+
+def _has_null(row: Mapping[str, Any], fields: Sequence[str]) -> bool:
+    return any(row[field] is None for field in fields)

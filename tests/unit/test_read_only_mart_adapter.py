@@ -266,6 +266,55 @@ def test_missing_lineage_fails_closed_without_payload(tmp_path: Path) -> None:
     assert result.payloads == ()
 
 
+def test_incomplete_top_holder_qoq_row_fails_closed(tmp_path: Path) -> None:
+    db_path = tmp_path / "incomplete_top_holder.duckdb"
+    connection = duckdb.connect(str(db_path))
+    try:
+        _create_top_holder_table(connection)
+        _create_lineage_table(connection, TOP_HOLDER_QOQ_LINEAGE_MART)
+        connection.execute(
+            (
+                f"INSERT INTO {TOP_HOLDER_QOQ_MART} "
+                "VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)"
+            ),
+            [
+                "top-key",
+                "top_holder",
+                "holder-alpha",
+                "security-alpha",
+                "2026-03-31",
+                "2026-04-30",
+                None,
+                None,
+                4200000.0,
+                None,
+                None,
+                None,
+                0.042,
+                None,
+                None,
+            ],
+        )
+        _insert_lineage(
+            connection,
+            TOP_HOLDER_QOQ_LINEAGE_MART,
+            "top-key",
+            "run-top",
+            "first observed report-date row has no previous comparison row",
+        )
+    finally:
+        connection.close()
+    adapter = ReadOnlyMartAdapter.from_duckdb_path(db_path)
+
+    rows = adapter.top_holder_qoq_changes()
+
+    assert rows == ()
+    assert len(adapter.diagnostics) == 1
+    assert adapter.diagnostics[0].table == TOP_HOLDER_QOQ_MART
+    assert adapter.diagnostics[0].reason == "incomplete_change_row"
+    assert adapter.diagnostics[0].row_key == "top-key"
+
+
 def test_adapter_executes_select_only_with_connection_factory() -> None:
     class SpyCursor:
         def __init__(self, queries: list[str]) -> None:
