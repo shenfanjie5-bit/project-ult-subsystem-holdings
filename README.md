@@ -53,5 +53,6 @@ Boundary:
 
 ```bash
 python -m pytest -q
+python -m pytest -q tests/boundary
 git diff --check origin/main...HEAD
 ```
