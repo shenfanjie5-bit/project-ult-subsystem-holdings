@@ -14,13 +14,61 @@ class LineageSummary:
     dataset: str
     snapshot_id: str
     as_of_date: str
+    source_mart: str | None = None
+    source_window_start_date: str | None = None
+    source_window_end_date: str | None = None
+    source_interface_ids: tuple[str, ...] = ()
+    source_row_count: int | None = None
+    source_lineage_row_count: int | None = None
+    source_lineage_summary: str | None = None
+    source_run_ids: tuple[str, ...] = ()
+    raw_loaded_at_min: str | None = None
+    raw_loaded_at_max: str | None = None
 
     def as_properties(self) -> dict[str, object]:
-        return {
+        properties: dict[str, object] = {
             "dataset": self.dataset,
             "snapshot_id": self.snapshot_id,
             "as_of_date": self.as_of_date,
         }
+        optional: dict[str, object | None] = {
+            "source_mart": self.source_mart,
+            "source_window_start_date": self.source_window_start_date,
+            "source_window_end_date": self.source_window_end_date,
+            "source_row_count": self.source_row_count,
+            "source_lineage_row_count": self.source_lineage_row_count,
+            "source_lineage_summary": self.source_lineage_summary,
+            "raw_loaded_at_min": self.raw_loaded_at_min,
+            "raw_loaded_at_max": self.raw_loaded_at_max,
+        }
+        properties.update(
+            {key: value for key, value in optional.items() if value is not None}
+        )
+        if self.source_interface_ids:
+            properties["source_interface_ids"] = list(self.source_interface_ids)
+        if self.source_run_ids:
+            properties["source_run_ids"] = list(self.source_run_ids)
+        return properties
+
+    def as_evidence_summary(self) -> str:
+        parts = [
+            f"dataset={self.dataset}",
+            f"snapshot_id={self.snapshot_id}",
+            f"as_of_date={self.as_of_date}",
+        ]
+        if self.source_mart is not None:
+            parts.append(f"source_mart={self.source_mart}")
+        if self.source_window_start_date is not None:
+            parts.append(f"source_window_start_date={self.source_window_start_date}")
+        if self.source_window_end_date is not None:
+            parts.append(f"source_window_end_date={self.source_window_end_date}")
+        if self.source_row_count is not None:
+            parts.append(f"source_row_count={self.source_row_count}")
+        if self.source_lineage_row_count is not None:
+            parts.append(f"source_lineage_row_count={self.source_lineage_row_count}")
+        if self.source_lineage_summary is not None:
+            parts.append(f"source_lineage_summary={self.source_lineage_summary}")
+        return "lineage:" + ";".join(parts)
 
 
 @dataclass(frozen=True, slots=True)
@@ -35,12 +83,50 @@ class CanonicalHoldingPosition:
 
 @dataclass(frozen=True, slots=True)
 class TopHolderQoQChange:
-    change_id: str
+    holding_source: str
     holder_id: str
     security_id: str
     report_date: str
-    ratio_delta: float
+    announced_date: str
+    previous_report_date: str
+    previous_announced_date: str
+    holding_amount: float
+    previous_holding_amount: float
+    holding_amount_delta: float
+    holding_amount_delta_pct: float
+    holding_ratio: float
+    previous_holding_ratio: float
+    holding_ratio_delta: float
     lineage: LineageSummary
+
+    @property
+    def row_id(self) -> str:
+        return ":".join(
+            (
+                self.holding_source,
+                self.holder_id,
+                self.security_id,
+                self.report_date,
+            )
+        )
+
+    def as_mart_properties(self) -> dict[str, object]:
+        return {
+            "holding_source": self.holding_source,
+            "holder_id": self.holder_id,
+            "security_id": self.security_id,
+            "report_date": self.report_date,
+            "announced_date": self.announced_date,
+            "previous_report_date": self.previous_report_date,
+            "previous_announced_date": self.previous_announced_date,
+            "holding_amount": self.holding_amount,
+            "previous_holding_amount": self.previous_holding_amount,
+            "holding_amount_delta": self.holding_amount_delta,
+            "holding_amount_delta_pct": self.holding_amount_delta_pct,
+            "holding_ratio": self.holding_ratio,
+            "previous_holding_ratio": self.previous_holding_ratio,
+            "holding_ratio_delta": self.holding_ratio_delta,
+        }
 
 
 @dataclass(frozen=True, slots=True)
@@ -81,7 +167,7 @@ class NorthboundZScoreRow:
 class AuditRecord:
     row_id: str
     reason: AuditReason
-    detail: str
+    detail: object
 
 
 @dataclass(frozen=True, slots=True)
