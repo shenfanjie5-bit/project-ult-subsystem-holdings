@@ -9,6 +9,7 @@ description = "Holdings producer subsystem MVP scaffold for project-ult."
 readme = "README.md"
 requires-python = ">=3.11,<3.13"
 dependencies = [
+    "duckdb>=1.0",
     "pydantic>=2.6",
     "project-ult-contracts>=0.1.3",
     "project-ult-subsystem-sdk>=0.1.2",
