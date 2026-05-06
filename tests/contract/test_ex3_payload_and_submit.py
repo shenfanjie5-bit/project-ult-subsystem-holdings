@@ -29,6 +29,38 @@ def test_payloads_keep_holdings_mart_shapes() -> None:
         produced_at=datetime(2026, 3, 31, 8, 0, tzinfo=UTC)
     )
     payloads = {payload["relation_type"]: payload for payload in result.payloads}
+    co_holding_lineage = {
+        "dataset": "holdings_derivation_mart",
+        "snapshot_id": "snapshot-alpha",
+        "as_of_date": "2026-03-31",
+        "source_mart": "mart_deriv_fund_co_holding",
+        "source_window_start_date": "2026-03-31",
+        "source_window_end_date": "2026-03-31",
+        "source_row_count": 54,
+        "lineage_row_count": 12,
+        "lineage_summary": "fund-position rows aggregated into security-pair overlap",
+        "source_load_started_at": "2026-04-30T00:00:00Z",
+        "source_load_finished_at": "2026-04-30T00:05:00Z",
+        "source_interface_ids_summary": ["fund-position-summary"],
+        "source_run_ids_summary": ["holdings-derivation-run-alpha"],
+    }
+    northbound_lineage = {
+        "dataset": "holdings_derivation_mart",
+        "snapshot_id": "snapshot-alpha",
+        "as_of_date": "2026-03-31",
+        "source_mart": "mart_deriv_northbound_holding_z_score",
+        "source_window_start_date": "2025-12-31",
+        "source_window_end_date": "2026-03-31",
+        "source_row_count": 8,
+        "lineage_row_count": 8,
+        "lineage_summary": (
+            "windowed holding-ratio observations standardized per holder-security"
+        ),
+        "source_load_started_at": "2026-04-30T00:00:00Z",
+        "source_load_finished_at": "2026-04-30T00:05:00Z",
+        "source_interface_ids_summary": ["northbound-position-summary"],
+        "source_run_ids_summary": ["holdings-derivation-run-alpha"],
+    }
 
     co_holding = payloads["CO_HOLDING"]
     assert co_holding["source_node"] == "ENT_SECURITY_ALPHA"
@@ -40,15 +72,16 @@ def test_payloads_keep_holdings_mart_shapes() -> None:
         "security_right_fund_count": 24,
         "jaccard_score": 0.286,
         "latest_announced_date": "2026-04-30",
-        "lineage": {
-            "dataset": "holdings_canonical_mart",
-            "snapshot_id": "snapshot-alpha",
-            "as_of_date": "2026-03-31",
-        },
+        "lineage": co_holding_lineage,
     }
     assert "co_holding_fund_count=12" in co_holding["evidence"][1]
     assert "jaccard_score=0.286" in co_holding["evidence"][1]
     assert "latest_announced_date=2026-04-30" in co_holding["evidence"][1]
+    assert "source_mart=mart_deriv_fund_co_holding" in co_holding["evidence"][2]
+    assert co_holding["producer_context"]["source_mart"] == (
+        "mart_deriv_fund_co_holding"
+    )
+    assert co_holding["producer_context"]["lineage"] == co_holding_lineage
 
     northbound = payloads["NORTHBOUND_HOLD"]
     assert northbound["source_node"] == "ENT_NORTHBOUND_HOLDER"
@@ -56,7 +89,7 @@ def test_payloads_keep_holdings_mart_shapes() -> None:
     assert northbound["properties"] == {
         "report_date": "2026-03-31",
         "z_score_metric": "holding_ratio",
-        "lookback_observations": 90,
+        "lookback_observations": 8,
         "window_start_date": "2025-12-31",
         "window_end_date": "2026-03-31",
         "observation_count": 63,
@@ -64,11 +97,7 @@ def test_payloads_keep_holdings_mart_shapes() -> None:
         "metric_mean": 0.011,
         "metric_stddev": 0.0029,
         "metric_z_score": 2.4,
-        "lineage": {
-            "dataset": "holdings_canonical_mart",
-            "snapshot_id": "snapshot-alpha",
-            "as_of_date": "2026-03-31",
-        },
+        "lineage": northbound_lineage,
     }
     assert "trade_date" not in northbound["properties"]
     assert "z_score" not in northbound["properties"]
@@ -86,7 +115,7 @@ def test_payloads_keep_holdings_mart_shapes() -> None:
         "mart_deriv_northbound_holding_z_score:"
     )
     assert "z_score_metric=holding_ratio" in northbound["evidence"][1]
-    assert "lookback_observations=90" in northbound["evidence"][1]
+    assert "lookback_observations=8" in northbound["evidence"][1]
     assert "window_start_date=2025-12-31" in northbound["evidence"][1]
     assert "window_end_date=2026-03-31" in northbound["evidence"][1]
     assert "observation_count=63" in northbound["evidence"][1]
@@ -94,6 +123,11 @@ def test_payloads_keep_holdings_mart_shapes() -> None:
     assert "metric_mean=0.011" in northbound["evidence"][1]
     assert "metric_stddev=0.0029" in northbound["evidence"][1]
     assert "metric_z_score=2.4" in northbound["evidence"][1]
+    assert (
+        "source_mart=mart_deriv_northbound_holding_z_score"
+        in northbound["evidence"][2]
+    )
+    assert northbound["producer_context"]["lineage"] == northbound_lineage
 
 
 def test_mock_submit_backend_receives_valid_wire_payloads() -> None:

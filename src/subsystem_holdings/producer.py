@@ -59,9 +59,17 @@ class HoldingsProducer:
         for row in self.reader.top_holder_qoq_changes():
             audit.append(
                 AuditRecord(
-                    row_id=row.change_id,
+                    row_id=row.row_id,
                     reason="read_only_input",
-                    detail="top-holder quarter-over-quarter input is not submitted in PR1",
+                    detail={
+                        "message": (
+                            "top-holder quarter-over-quarter input is not submitted "
+                            "in PR1"
+                        ),
+                        "source_mart": "mart_deriv_top_holder_qoq_change",
+                        "mart_row": row.as_mart_properties(),
+                        "lineage": row.lineage.as_properties(),
+                    },
                 )
             )
 
@@ -134,10 +142,14 @@ class HoldingsProducer:
                     f"jaccard_score={row.jaccard_score};"
                     f"latest_announced_date={row.latest_announced_date}"
                 ),
+                row.lineage.as_evidence_summary(),
             ],
             "producer_context": {
                 "mart_row_id": row.row_id,
+                "source_mart": row.lineage.source_mart
+                or "mart_deriv_fund_co_holding",
                 "source_shape": "mart_deriv_fund_co_holding_security_pair",
+                "lineage": row.lineage.as_properties(),
             },
         }
         return payload
@@ -193,11 +205,14 @@ class HoldingsProducer:
                     f"metric_stddev={row.metric_stddev};"
                     f"metric_z_score={row.metric_z_score}"
                 ),
+                row.lineage.as_evidence_summary(),
             ],
             "producer_context": {
                 "mart_row_id": row.row_id,
-                "source_mart": "mart_deriv_northbound_holding_z_score",
+                "source_mart": row.lineage.source_mart
+                or "mart_deriv_northbound_holding_z_score",
                 "source_shape": "mart_deriv_northbound_holding_z_score",
+                "lineage": row.lineage.as_properties(),
             },
         }
         return payload

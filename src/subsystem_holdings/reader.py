@@ -44,10 +44,55 @@ class FakeHoldingsMartReader:
 
 
 def build_default_fake_reader() -> FakeHoldingsMartReader:
-    lineage = LineageSummary(
+    canonical_lineage = LineageSummary(
         dataset="holdings_canonical_mart",
         snapshot_id="snapshot-alpha",
         as_of_date="2026-03-31",
+    )
+    top_holder_lineage = LineageSummary(
+        dataset="holdings_derivation_mart",
+        snapshot_id="snapshot-alpha",
+        as_of_date="2026-03-31",
+        source_mart="mart_deriv_top_holder_qoq_change",
+        source_window_start_date="2025-12-31",
+        source_window_end_date="2026-03-31",
+        source_interface_ids_summary=("holdings-quarterly-position",),
+        source_row_count=2,
+        lineage_row_count=1,
+        lineage_summary="current and previous report-date rows joined by holder-security",
+        source_run_ids_summary=("holdings-derivation-run-alpha",),
+        source_load_started_at="2026-04-30T00:00:00Z",
+        source_load_finished_at="2026-04-30T00:05:00Z",
+    )
+    co_holding_lineage = LineageSummary(
+        dataset="holdings_derivation_mart",
+        snapshot_id="snapshot-alpha",
+        as_of_date="2026-03-31",
+        source_mart="mart_deriv_fund_co_holding",
+        source_window_start_date="2026-03-31",
+        source_window_end_date="2026-03-31",
+        source_interface_ids_summary=("fund-position-summary",),
+        source_row_count=54,
+        lineage_row_count=12,
+        lineage_summary="fund-position rows aggregated into security-pair overlap",
+        source_run_ids_summary=("holdings-derivation-run-alpha",),
+        source_load_started_at="2026-04-30T00:00:00Z",
+        source_load_finished_at="2026-04-30T00:05:00Z",
+    )
+    northbound_lineage = LineageSummary(
+        dataset="holdings_derivation_mart",
+        snapshot_id="snapshot-alpha",
+        as_of_date="2026-03-31",
+        source_mart="mart_deriv_northbound_holding_z_score",
+        source_window_start_date="2025-12-31",
+        source_window_end_date="2026-03-31",
+        source_interface_ids_summary=("northbound-position-summary",),
+        source_row_count=8,
+        lineage_row_count=8,
+        lineage_summary="windowed holding-ratio observations standardized per holder-security",
+        source_run_ids_summary=("holdings-derivation-run-alpha",),
+        source_load_started_at="2026-04-30T00:00:00Z",
+        source_load_finished_at="2026-04-30T00:05:00Z",
     )
     return FakeHoldingsMartReader(
         positions=(
@@ -57,17 +102,26 @@ def build_default_fake_reader() -> FakeHoldingsMartReader:
                 security_id="security-alpha",
                 report_date="2026-03-31",
                 holding_ratio=0.042,
-                lineage=lineage,
+                lineage=canonical_lineage,
             ),
         ),
         top_holder_changes=(
             TopHolderQoQChange(
-                change_id="top-holder-alpha",
+                holding_source="quarterly_report",
                 holder_id="holder-alpha",
                 security_id="security-alpha",
                 report_date="2026-03-31",
-                ratio_delta=0.011,
-                lineage=lineage,
+                announced_date="2026-04-30",
+                previous_report_date="2025-12-31",
+                previous_announced_date="2026-01-31",
+                holding_amount=4200000.0,
+                previous_holding_amount=3900000.0,
+                holding_amount_delta=300000.0,
+                holding_amount_delta_pct=0.0769,
+                holding_ratio=0.042,
+                previous_holding_ratio=0.031,
+                holding_ratio_delta=0.011,
+                lineage=top_holder_lineage,
             ),
         ),
         co_holdings=(
@@ -82,7 +136,7 @@ def build_default_fake_reader() -> FakeHoldingsMartReader:
                 jaccard_score=0.286,
                 latest_announced_date="2026-04-30",
                 evidence_ref="evidence-coholding-alpha",
-                lineage=lineage,
+                lineage=co_holding_lineage,
             ),
         ),
         northbound_rows=(
@@ -92,7 +146,7 @@ def build_default_fake_reader() -> FakeHoldingsMartReader:
                 holder_id="northbound-holder",
                 report_date="2026-03-31",
                 z_score_metric="holding_ratio",
-                lookback_observations=90,
+                lookback_observations=8,
                 window_start_date="2025-12-31",
                 window_end_date="2026-03-31",
                 observation_count=63,
@@ -101,7 +155,7 @@ def build_default_fake_reader() -> FakeHoldingsMartReader:
                 metric_stddev=0.0029,
                 metric_z_score=2.4,
                 evidence_ref="evidence-northbound-alpha",
-                lineage=lineage,
+                lineage=northbound_lineage,
             ),
         ),
     )
