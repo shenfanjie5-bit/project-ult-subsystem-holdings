@@ -5,6 +5,7 @@ from subsystem_holdings.alignment import (
     EntityAlignmentTable,
     build_default_aligner,
 )
+from subsystem_holdings.mart_adapter import AdapterDiagnostic, ReadOnlyMartAdapter
 from subsystem_holdings.producer import HoldingsProducer
 from subsystem_holdings.reader import FakeHoldingsMartReader, build_default_fake_reader
 
@@ -26,8 +27,10 @@ def build_mock_submit_client():
 __all__ = [
     "EntityAligner",
     "EntityAlignmentTable",
+    "AdapterDiagnostic",
     "FakeHoldingsMartReader",
     "HoldingsProducer",
+    "ReadOnlyMartAdapter",
     "build_default_aligner",
     "build_default_fake_reader",
     "build_default_offline_producer",

@@ -16,6 +16,7 @@ dependencies = [
 
 [project.optional-dependencies]
 dev = [
+    "duckdb>=1.0",
     "pytest>=8.0",
 ]
 contracts-schemas = [
