@@ -39,7 +39,7 @@ Exact upstream blocker:
 - Error summary: `HTTPConnectionPool(host='api.waditu.com', port=80): Read
   timed out. (read timeout=30)`.
 
-The plan-only backfill preflight did pass with `planned_count=5`,
+The plan-only backfill preflight completed with `planned_count=5`,
 `skipped_count=0`, and `rejected_count=0`, but no complete live Raw Zone
 holdings input set was produced.
 
