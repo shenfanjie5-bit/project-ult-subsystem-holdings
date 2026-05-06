@@ -1,6 +1,9 @@
 from __future__ import annotations
 
-from subsystem_sdk.backends import DataPlatformQueueSubmitBackend, SubmitCandidateFunc
+from subsystem_sdk.backends.data_platform_queue import (
+    DataPlatformQueueSubmitBackend,
+    SubmitCandidateFunc,
+)
 from subsystem_sdk.submit import SubmitClient
 
 
