@@ -10,6 +10,7 @@ from dataclasses import dataclass
 from pathlib import Path
 from typing import Any
 
+from subsystem_holdings.entity_registry_adapter import EntityRegistryAdapter
 from subsystem_holdings.mart_adapter import AdapterDiagnostic
 from subsystem_holdings.submit_client import build_data_platform_queue_submit_client
 
@@ -123,6 +124,7 @@ def run_real_queue_submit_proof(
     max_payloads: int | None = None,
     env: Mapping[str, str] | None = None,
     submit_candidate_func: Any | None = None,
+    entity_lookup: Any | None = None,
 ) -> dict[str, Any]:
     runtime_env = env or os.environ
     if execute and runtime_env.get(CONFIRM_ENV) != "1":
@@ -131,7 +133,11 @@ def run_real_queue_submit_proof(
     if not duckdb_path.exists():
         raise ProofRunnerError("duckdb_path_missing", 2)
 
-    producer, adapter = build_read_only_producer(duckdb_path)
+    registry_adapter = EntityRegistryAdapter()
+    producer, adapter = build_read_only_producer(
+        duckdb_path,
+        aligner=registry_adapter,
+    )
     result = producer.build_payloads()
     selected_payloads = tuple(result.payloads[:max_payloads])
     _validate_payload_selection(selected_payloads)
@@ -139,7 +145,9 @@ def run_real_queue_submit_proof(
     receipts: tuple[Any, ...] = ()
     if execute:
         client = build_data_platform_queue_submit_client(
-            submit_candidate_func=submit_candidate_func
+            submit_candidate_func=submit_candidate_func,
+            entity_lookup=entity_lookup or registry_adapter,
+            entity_preflight_profile="production",
         )
         receipts = tuple(client.submit(payload) for payload in selected_payloads)
 

@@ -1,10 +1,16 @@
 from __future__ import annotations
 
 from dataclasses import dataclass, field
-from typing import Mapping
+from typing import Mapping, Protocol
 
 from subsystem_holdings.errors import AlignmentError
 from subsystem_holdings.models import AlignmentDecision
+
+
+class EntityAlignmentResolver(Protocol):
+    def holder(self, holder_id: str) -> AlignmentDecision: ...
+
+    def security(self, security_id: str) -> AlignmentDecision: ...
 
 
 @dataclass(frozen=True, slots=True)
