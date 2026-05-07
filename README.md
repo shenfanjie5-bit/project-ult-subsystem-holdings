@@ -41,6 +41,8 @@ hardening before any controlled opt-in/default propagation canary. That work
 should preserve the current producer boundary and keep default/full propagation
 disabled until explicitly approved and evidenced.
 
+Operational runbook: [Holdings Producer Runbook](docs/producer-runbook.md).
+
 ## Read-Only Mart Adapter
 
 `ReadOnlyMartAdapter` reads already-landed data-platform mart tables through injected configuration. It supports either a DB-API style `connection_factory` or `ReadOnlyMartAdapter.from_duckdb_path(database_path)`, which opens DuckDB in read-only mode. The adapter does not read `.env` files, does not hard-code a path or connection string, and only executes `SELECT` statements.
@@ -86,6 +88,9 @@ Boundary:
 ```bash
 python -m pytest -q
 python -m pytest -q tests/boundary
+python -m pytest -q tests/contract/test_production_queue_submit_runner.py
+python -m pytest -q tests/contract/test_data_platform_queue_submit.py
+python -m pytest -q tests/contract/test_ex3_payload_and_submit.py
 git diff --check origin/main...HEAD
 ```
 
