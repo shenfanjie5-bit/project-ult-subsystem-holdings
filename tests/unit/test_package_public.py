@@ -3,6 +3,8 @@ from pathlib import Path
 
 from subsystem_holdings import __version__
 from subsystem_holdings.public import (
+    EntityAlignmentResolver,
+    EntityRegistryAdapter,
     build_default_offline_producer,
     build_mock_submit_client,
 )
@@ -10,6 +12,8 @@ from subsystem_holdings.public import (
 
 def test_package_import_and_public_api() -> None:
     assert __version__ == "0.1.0"
+    assert EntityAlignmentResolver is not None
+    assert EntityRegistryAdapter is not None
     producer = build_default_offline_producer()
     result = producer.build_payloads()
     assert {payload["relation_type"] for payload in result.payloads} == {

@@ -43,6 +43,16 @@ class _FakeProducer:
         return ProducerResult(payloads=self.payloads, audit=self.audit)
 
 
+@dataclass(slots=True)
+class _AllowAllEntityLookup:
+    calls: list[tuple[str, ...]] = field(default_factory=list)
+
+    def lookup(self, refs: Any) -> Mapping[str, bool]:
+        refs_tuple = tuple(refs)
+        self.calls.append(refs_tuple)
+        return {ref: True for ref in refs_tuple}
+
+
 def _duckdb_placeholder(tmp_path: Path) -> Path:
     path = tmp_path / "verified.duckdb"
     path.write_bytes(b"not-opened-by-test")
@@ -85,7 +95,7 @@ def test_dry_run_summary_is_sanitized_and_does_not_submit(
     monkeypatch.setattr(
         runner,
         "build_read_only_producer",
-        lambda _: (_FakeProducer(payloads), _FakeAdapter()),
+        lambda *_args, **_kwargs: (_FakeProducer(payloads), _FakeAdapter()),
     )
 
     summary = runner.run_real_queue_submit_proof(
@@ -115,9 +125,10 @@ def test_execute_with_gate_uses_sdk_queue_backend_and_sanitized_envelope(
     monkeypatch.setattr(
         runner,
         "build_read_only_producer",
-        lambda _: (_FakeProducer(payloads), _FakeAdapter()),
+        lambda *_args, **_kwargs: (_FakeProducer(payloads), _FakeAdapter()),
     )
     captured: list[dict[str, Any]] = []
+    entity_lookup = _AllowAllEntityLookup()
 
     def record_submit_candidate(payload: Mapping[str, Any]) -> Mapping[str, Any]:
         captured.append(dict(payload))
@@ -128,6 +139,7 @@ def test_execute_with_gate_uses_sdk_queue_backend_and_sanitized_envelope(
         execute=True,
         env={runner.CONFIRM_ENV: "1"},
         submit_candidate_func=record_submit_candidate,
+        entity_lookup=entity_lookup,
     )
 
     assert summary["mode"] == "execute"
@@ -136,6 +148,10 @@ def test_execute_with_gate_uses_sdk_queue_backend_and_sanitized_envelope(
     assert summary["accepted_receipt_count"] == 2
     assert summary["receipt_backend_kinds"] == ["data_platform_queue"]
     assert len(captured) == 2
+    assert entity_lookup.calls == [
+        ("ENT_SECURITY_ALPHA", "ENT_SECURITY_BETA"),
+        ("ENT_NORTHBOUND_HOLDER", "ENT_SECURITY_ALPHA"),
+    ]
     assert {payload["relation_type"] for payload in captured} == {
         "CO_HOLDING",
         "NORTHBOUND_HOLD",
@@ -165,7 +181,7 @@ def test_disallowed_relation_type_fails_before_submit(
     monkeypatch.setattr(
         runner,
         "build_read_only_producer",
-        lambda _: (_FakeProducer((payload,)), _FakeAdapter()),
+        lambda *_args, **_kwargs: (_FakeProducer((payload,)), _FakeAdapter()),
     )
 
     with pytest.raises(runner.ProofRunnerError) as error:

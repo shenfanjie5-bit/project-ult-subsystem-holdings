@@ -10,6 +10,17 @@ from subsystem_holdings.public import build_default_offline_producer
 from subsystem_holdings.submit_client import build_data_platform_queue_submit_client
 
 
+class _PreflightLookup:
+    def __init__(self, resolved_refs: set[str] | None = None) -> None:
+        self._resolved_refs = resolved_refs or set()
+        self.calls: list[tuple[str, ...]] = []
+
+    def lookup(self, refs):
+        refs_tuple = tuple(refs)
+        self.calls.append(refs_tuple)
+        return {ref: ref in self._resolved_refs for ref in refs_tuple}
+
+
 def test_data_platform_queue_submit_client_captures_sanitized_ex3_envelope() -> None:
     captured: list[dict[str, Any]] = []
 
@@ -59,3 +70,33 @@ def test_data_platform_queue_submit_client_captures_sanitized_ex3_envelope() -> 
                 if key not in {"payload_type", "submitted_by"}
             }
         )
+
+
+def test_queue_submit_entity_preflight_block_rejects_before_backend_call() -> None:
+    captured: list[dict[str, Any]] = []
+
+    def record_submit_candidate(payload: Mapping[str, Any]) -> Mapping[str, Any]:
+        captured.append(dict(payload))
+        return {"id": "must-not-submit"}
+
+    payload = build_default_offline_producer().build_payloads().payloads[0]
+    lookup = _PreflightLookup(resolved_refs={"ENT_SECURITY_ALPHA"})
+    client = build_data_platform_queue_submit_client(
+        submit_candidate_func=record_submit_candidate,
+        entity_lookup=lookup,
+        preflight_policy="block",
+    )
+
+    receipt = client.submit(payload)
+
+    assert captured == []
+    assert receipt.accepted is False
+    assert receipt.backend_kind == "data_platform_queue"
+    assert receipt.errors == (
+        "entity preflight blocked unresolved reference(s): ENT_SECURITY_BETA",
+    )
+    assert (
+        "entity preflight found unresolved reference(s): ENT_SECURITY_BETA"
+        in receipt.warnings
+    )
+    assert lookup.calls == [("ENT_SECURITY_ALPHA", "ENT_SECURITY_BETA")]

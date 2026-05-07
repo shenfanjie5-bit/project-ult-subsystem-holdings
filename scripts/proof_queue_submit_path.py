@@ -8,7 +8,12 @@ from collections.abc import Mapping, Sequence
 from pathlib import Path
 from typing import Any
 
-from subsystem_holdings.alignment import EntityAligner, EntityAlignmentTable
+from subsystem_holdings.alignment import (
+    EntityAligner,
+    EntityAlignmentResolver,
+    EntityAlignmentTable,
+)
+from subsystem_holdings.entity_registry_adapter import EntityRegistryAdapter
 from subsystem_holdings.mart_adapter import ReadOnlyMartAdapter
 from subsystem_holdings.producer import HoldingsProducer
 from subsystem_holdings.reader import HoldingsMartReader
@@ -70,12 +75,12 @@ def build_proof_only_aligner(reader: HoldingsMartReader) -> EntityAligner:
 
 def build_read_only_producer(
     duckdb_path: Path,
-    aligner: EntityAligner | None = None,
+    aligner: EntityAlignmentResolver | None = None,
 ) -> tuple[HoldingsProducer, ReadOnlyMartAdapter]:
     adapter = ReadOnlyMartAdapter.from_duckdb_path(duckdb_path)
-    proof_aligner = aligner if aligner is not None else build_proof_only_aligner(adapter)
+    alignment_resolver = aligner if aligner is not None else EntityRegistryAdapter()
     adapter.clear_diagnostics()
-    return HoldingsProducer(adapter, proof_aligner), adapter
+    return HoldingsProducer(adapter, alignment_resolver), adapter
 
 
 def _recording_submit_candidate(
@@ -104,7 +109,9 @@ def _relation_counts(envelopes: Sequence[Mapping[str, Any]]) -> dict[str, int]:
 
 def run_proof(duckdb_path: Path) -> dict[str, Any]:
     captured: list[dict[str, Any]] = []
-    producer, adapter = build_read_only_producer(duckdb_path)
+    adapter = ReadOnlyMartAdapter.from_duckdb_path(duckdb_path)
+    producer = HoldingsProducer(adapter, build_proof_only_aligner(adapter))
+    adapter.clear_diagnostics()
     client = build_data_platform_queue_submit_client(
         submit_candidate_func=_recording_submit_candidate(captured)
     )

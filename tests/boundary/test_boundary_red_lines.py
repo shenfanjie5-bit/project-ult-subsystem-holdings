@@ -4,6 +4,7 @@ from pathlib import Path
 
 DENIED = (
     "tushare",
+    "entity_registry.storage",
     "data_platform.adapters",
     "data_platform.queue.api",
     "stg_",

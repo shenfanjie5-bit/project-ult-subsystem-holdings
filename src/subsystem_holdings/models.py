@@ -2,7 +2,7 @@ from __future__ import annotations
 
 from dataclasses import dataclass, field
 from datetime import datetime
-from typing import Any, Literal, TypeAlias
+from typing import Any, Literal, Mapping, TypeAlias
 
 RelationType: TypeAlias = Literal["CO_HOLDING", "NORTHBOUND_HOLD"]
 AuditReason: TypeAlias = Literal["unresolved_holder", "unresolved_security", "read_only_input"]
@@ -174,6 +174,8 @@ class AuditRecord:
 class AlignmentDecision:
     source_id: str
     node_id: str | None
+    reason: str | None = None
+    metadata: Mapping[str, object] | None = None
 
     @property
     def resolved(self) -> bool:

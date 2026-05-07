@@ -4,7 +4,7 @@ from dataclasses import dataclass
 from datetime import UTC, datetime
 from typing import Any, Mapping
 
-from subsystem_holdings.alignment import EntityAligner
+from subsystem_holdings.alignment import EntityAlignmentResolver
 from subsystem_holdings.errors import PayloadValidationError
 from subsystem_holdings.models import (
     AuditRecord,
@@ -41,7 +41,7 @@ def _validate_ex3_wire_payload(payload: Mapping[str, Any]) -> None:
 @dataclass(slots=True)
 class HoldingsProducer:
     reader: HoldingsMartReader
-    aligner: EntityAligner
+    aligner: EntityAlignmentResolver
     subsystem_id: str = SUBSYSTEM_ID
 
     def build_payloads(self, *, produced_at: datetime | None = None) -> ProducerResult:
@@ -109,13 +109,13 @@ class HoldingsProducer:
         source = self.aligner.security(row.security_id_left)
         target = self.aligner.security(row.security_id_right)
         if not source.resolved:
-            audit.append(
-                AuditRecord(row.row_id, "unresolved_security", row.security_id_left)
+            _append_unresolved_alignment_audit(
+                audit, row.row_id, "unresolved_security", source
             )
             return None
         if not target.resolved:
-            audit.append(
-                AuditRecord(row.row_id, "unresolved_security", row.security_id_right)
+            _append_unresolved_alignment_audit(
+                audit, row.row_id, "unresolved_security", target
             )
             return None
 
@@ -165,10 +165,14 @@ class HoldingsProducer:
         holder = self.aligner.holder(row.holder_id)
         security = self.aligner.security(row.security_id)
         if not holder.resolved:
-            audit.append(AuditRecord(row.row_id, "unresolved_holder", row.holder_id))
+            _append_unresolved_alignment_audit(
+                audit, row.row_id, "unresolved_holder", holder
+            )
             return None
         if not security.resolved:
-            audit.append(AuditRecord(row.row_id, "unresolved_security", row.security_id))
+            _append_unresolved_alignment_audit(
+                audit, row.row_id, "unresolved_security", security
+            )
             return None
 
         payload: Ex3Payload = {
@@ -217,3 +221,24 @@ class HoldingsProducer:
             },
         }
         return payload
+
+
+def _append_unresolved_alignment_audit(
+    audit: list[AuditRecord],
+    row_id: str,
+    reason: str,
+    decision: Any,
+) -> None:
+    if (
+        getattr(decision, "reason", None) is None
+        and getattr(decision, "metadata", None) is None
+    ):
+        audit.append(AuditRecord(row_id, reason, decision.source_id))
+        return
+
+    detail: dict[str, object] = {"source_id": decision.source_id}
+    if decision.reason is not None:
+        detail["alignment_reason"] = decision.reason
+    if decision.metadata is not None:
+        detail["alignment_metadata"] = dict(decision.metadata)
+    audit.append(AuditRecord(row_id, reason, detail))
