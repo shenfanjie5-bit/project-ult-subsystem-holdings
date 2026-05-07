@@ -19,6 +19,7 @@ Current landed scope:
 - Map `mart_deriv_northbound_holding_z_score` rows to `NORTHBOUND_HOLD` between the holder and security entities. The fake row keeps the `security_id`, `holder_id`, `report_date`, `z_score_metric`, fixed `lookback_observations=8`, `window_start_date`, `window_end_date`, `observation_count`, metric stats, and `metric_z_score`.
 - Keep `mart_deriv_top_holder_qoq_change` rows as read-only audit input. Top-holder rows are not submitted as relationship candidates. Audit records retain the full mart row fields and expanded derivation lineage summary.
 - Preserve provider-neutral derivation lineage in emitted payload properties, evidence, and producer context using data-platform field names: `source_mart`, `source_interface_ids`, `source_lineage_row_count`, `source_lineage_summary`, `source_run_ids`, `raw_loaded_at_min`, and `raw_loaded_at_max`. Producer context keeps the derivation mart and source shape separate from lineage source mart.
+- Optionally filter producer output with a sanitized holdings `--scope-manifest` containing canonical manifest targets plus two-hop context refs. Associated two-hop companies remain graph/risk context only and are not promoted into decision targets.
 - Keep `FakeHoldingsMartReader` as the offline fixture reader.
 
 Bounded live producer proof now shows a complete live holdings backfill, dbt
@@ -33,6 +34,7 @@ Production hardening guards have landed for the gated production submit path:
 - Production entity preflight runs before queue submit.
 - Missing DuckDB targets, unresolved entity alignment, blocking adapter diagnostics, missing lineage, unsafe receipts, and missing idempotent queue APIs fail closed.
 - Summaries and evidence are sanitized and do not record secrets, DSNs, concrete market/fund codes, raw provider payloads, or local runtime paths.
+- Scope summaries record counts only (`scope_filtered_payload_count`, decision-target payload count, and graph/risk context payload count), never concrete scope refs or manifest contents.
 
 ## Next Step
 

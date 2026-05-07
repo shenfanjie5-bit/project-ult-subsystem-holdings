@@ -14,6 +14,7 @@ from subsystem_holdings.models import (
     ProducerResult,
 )
 from subsystem_holdings.reader import HoldingsMartReader
+from subsystem_holdings.scope import HoldingsScope, ScopeCheck
 
 SUBSYSTEM_ID = "subsystem-holdings"
 FUND_CO_HOLDING_DERIVATION_MART = "mart_deriv_fund_co_holding"
@@ -43,6 +44,7 @@ class HoldingsProducer:
     reader: HoldingsMartReader
     aligner: EntityAlignmentResolver
     subsystem_id: str = SUBSYSTEM_ID
+    scope: HoldingsScope | None = None
 
     def build_payloads(self, *, produced_at: datetime | None = None) -> ProducerResult:
         timestamp = produced_at or datetime.now(UTC)
@@ -118,6 +120,14 @@ class HoldingsProducer:
                 audit, row.row_id, "unresolved_security", target
             )
             return None
+        scope_check = self._scope_check(
+            relation_type="CO_HOLDING",
+            source_node=source.node_id,
+            target_node=target.node_id,
+        )
+        if scope_check is not None and not scope_check.allowed:
+            _append_scope_filtered_audit(audit, row.row_id, "CO_HOLDING", scope_check)
+            return None
 
         payload: Ex3Payload = {
             "ex_type": "Ex-3",
@@ -154,6 +164,7 @@ class HoldingsProducer:
                 "lineage": row.lineage.as_properties(),
             },
         }
+        _append_scope_context(payload, scope_check)
         return payload
 
     def _northbound_payload(
@@ -172,6 +183,16 @@ class HoldingsProducer:
         if not security.resolved:
             _append_unresolved_alignment_audit(
                 audit, row.row_id, "unresolved_security", security
+            )
+            return None
+        scope_check = self._scope_check(
+            relation_type="NORTHBOUND_HOLD",
+            source_node=holder.node_id,
+            target_node=security.node_id,
+        )
+        if scope_check is not None and not scope_check.allowed:
+            _append_scope_filtered_audit(
+                audit, row.row_id, "NORTHBOUND_HOLD", scope_check
             )
             return None
 
@@ -220,7 +241,31 @@ class HoldingsProducer:
                 "lineage": row.lineage.as_properties(),
             },
         }
+        _append_scope_context(payload, scope_check)
         return payload
+
+    def _scope_check(
+        self,
+        *,
+        relation_type: str,
+        source_node: str | None,
+        target_node: str | None,
+    ) -> ScopeCheck | None:
+        if self.scope is None:
+            return None
+        if source_node is None or target_node is None:
+            return ScopeCheck(
+                allowed=False,
+                reason="missing_endpoint",
+                usage=None,
+                source_role="outside_scope",
+                target_role="outside_scope",
+            )
+        return self.scope.evaluate(
+            relation_type=relation_type,
+            source_node=source_node,
+            target_node=target_node,
+        )
 
 
 def _append_unresolved_alignment_audit(
@@ -242,3 +287,32 @@ def _append_unresolved_alignment_audit(
     if decision.metadata is not None:
         detail["alignment_metadata"] = dict(decision.metadata)
     audit.append(AuditRecord(row_id, reason, detail))
+
+
+def _append_scope_filtered_audit(
+    audit: list[AuditRecord],
+    row_id: str,
+    relation_type: str,
+    scope_check: ScopeCheck,
+) -> None:
+    audit.append(
+        AuditRecord(
+            row_id=row_id,
+            reason="scope_filtered",
+            detail={
+                "relation_type": relation_type,
+                "scope_reason": scope_check.reason,
+                "source_role": scope_check.source_role,
+                "target_role": scope_check.target_role,
+            },
+        )
+    )
+
+
+def _append_scope_context(
+    payload: Ex3Payload,
+    scope_check: ScopeCheck | None,
+) -> None:
+    if scope_check is None:
+        return
+    payload["producer_context"]["holdings_scope"] = scope_check.as_context()

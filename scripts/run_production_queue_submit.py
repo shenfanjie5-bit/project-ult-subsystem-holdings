@@ -13,7 +13,7 @@ from pathlib import Path
 from typing import Any, Literal
 
 from subsystem_holdings.entity_registry_adapter import EntityRegistryAdapter
-from subsystem_holdings.errors import AdapterSchemaError
+from subsystem_holdings.errors import AdapterSchemaError, ScopeManifestError
 from subsystem_holdings.mart_adapter import (
     FUND_CO_HOLDING_LINEAGE_MART,
     FUND_CO_HOLDING_MART,
@@ -26,6 +26,7 @@ from subsystem_holdings.mart_adapter import (
 )
 from subsystem_holdings.models import AuditRecord, ProducerResult
 from subsystem_holdings.producer import HoldingsProducer
+from subsystem_holdings.scope import HoldingsScope, load_scope_manifest
 from subsystem_holdings.submit_client import build_data_platform_queue_submit_client
 from subsystem_sdk.validate.preflight import EntityRegistryLookup, run_entity_preflight
 
@@ -234,6 +235,35 @@ def _fixture_summary(config: EntityRegistryFixtureConfig | None) -> dict[str, in
     }
 
 
+def _configure_scope_manifest(
+    *,
+    scope_manifest: Path | None,
+    holdings_scope: HoldingsScope | None,
+) -> HoldingsScope | None:
+    if scope_manifest is not None and holdings_scope is not None:
+        raise ProductionRunnerError("holdings_scope_conflict", 2)
+    if holdings_scope is not None:
+        return holdings_scope
+    if scope_manifest is None:
+        return None
+    try:
+        return load_scope_manifest(scope_manifest)
+    except ScopeManifestError as exc:
+        raise ProductionRunnerError(exc.reason, 2) from exc
+
+
+def _scope_summary(scope: HoldingsScope | None) -> dict[str, int | bool]:
+    target_count = len(scope.target_entity_refs) if scope is not None else 0
+    context_count = len(scope.two_hop_context_entity_refs) if scope is not None else 0
+    allowed_count = len(scope.allowed_entity_refs) if scope is not None else 0
+    return {
+        "scope_configured": scope is not None,
+        "scope_manifest_target_count": target_count,
+        "scope_two_hop_context_count": context_count,
+        "scope_allowed_entity_count": allowed_count,
+    }
+
+
 def resolve_duckdb_path(
     cli_path: Path | None,
     env: Mapping[str, str] | None = None,
@@ -252,10 +282,18 @@ def build_read_only_producer(
     duckdb_path: Path,
     *,
     registry_adapter: EntityRegistryAdapter | None = None,
+    holdings_scope: HoldingsScope | None = None,
 ) -> tuple[HoldingsProducer, ReadOnlyMartAdapter]:
     adapter = ReadOnlyMartAdapter.from_duckdb_path(duckdb_path)
     adapter.clear_diagnostics()
-    return HoldingsProducer(adapter, registry_adapter or EntityRegistryAdapter()), adapter
+    return (
+        HoldingsProducer(
+            adapter,
+            registry_adapter or EntityRegistryAdapter(),
+            scope=holdings_scope,
+        ),
+        adapter,
+    )
 
 
 def _recording_submit_candidate(
@@ -295,6 +333,27 @@ def _diagnostic_count_for(
 
 def _relation_counts(payloads: Sequence[Mapping[str, Any]]) -> dict[str, int]:
     return _counter_dict(str(payload.get("relation_type")) for payload in payloads)
+
+
+def _scope_payload_counts(payloads: Sequence[Mapping[str, Any]]) -> dict[str, int]:
+    decision_target = 0
+    graph_risk_context = 0
+    for payload in payloads:
+        producer_context = payload.get("producer_context")
+        if not isinstance(producer_context, Mapping):
+            continue
+        holdings_scope = producer_context.get("holdings_scope")
+        if not isinstance(holdings_scope, Mapping):
+            continue
+        decision_usage = holdings_scope.get("decision_usage")
+        if decision_usage == "decision_target":
+            decision_target += 1
+        elif decision_usage == "graph_risk_context":
+            graph_risk_context += 1
+    return {
+        "scope_decision_target_payload_count": decision_target,
+        "scope_graph_risk_context_payload_count": graph_risk_context,
+    }
 
 
 def _private_wire_field_leaks(payloads: Sequence[Mapping[str, Any]]) -> list[str]:
@@ -487,6 +546,9 @@ def _schema_failure_summary(
         "built_payload_count": 0,
         "selected_payload_count": 0,
         "relation_counts": {},
+        "scope_filtered_payload_count": 0,
+        "scope_decision_target_payload_count": 0,
+        "scope_graph_risk_context_payload_count": 0,
         "audit_counts": {},
         "adapter_diagnostic_counts": _diagnostic_counts(diagnostics),
         "submit_mart_diagnostic_count": _diagnostic_count_for(
@@ -531,6 +593,7 @@ def _build_readiness_summary(
         TOP_HOLDER_DIAGNOSTIC_TABLES,
     )
     relation_counts = _relation_counts(payloads)
+    scope_payload_counts = _scope_payload_counts(payloads)
     disallowed_relation_types = sorted(set(relation_counts).difference(ALLOWED_RELATION_TYPES))
     private_wire_field_leaks = _private_wire_field_leaks(payloads)
     preflight_receipt_summary = _receipt_summary(preflight_receipts, prefix="preflight_")
@@ -560,6 +623,7 @@ def _build_readiness_summary(
         "partial_submit_allowed": partial_submit_allowed,
         "relation_counts": relation_counts,
         "relation_type_set": sorted(relation_counts),
+        "scope_filtered_payload_count": audit_counts.get("scope_filtered", 0),
         "disallowed_relation_type_count": len(disallowed_relation_types),
         "private_wire_field_leak_count": len(private_wire_field_leaks),
         "audit_counts": audit_counts,
@@ -568,6 +632,7 @@ def _build_readiness_summary(
         "submit_mart_diagnostic_count": submit_mart_diagnostic_count,
         "top_holder_diagnostic_count": top_holder_diagnostic_count,
     }
+    summary.update(scope_payload_counts)
     summary.update(_idempotent_capability_summary(supported=True))
     if reasons:
         summary["reason"] = reasons[0]
@@ -593,6 +658,8 @@ def run_production_queue_submit(
     entity_lookup: EntityRegistryLookup | None = None,
     entity_registry_fixture: Path | None = None,
     entity_registry_alias_map: Path | None = None,
+    scope_manifest: Path | None = None,
+    holdings_scope: HoldingsScope | None = None,
 ) -> dict[str, Any]:
     runtime_env = env or os.environ
     if mode == "execute" and runtime_env.get(CONFIRM_ENV) != "1":
@@ -608,22 +675,30 @@ def run_production_queue_submit(
         entity_lookup=entity_lookup,
     )
     fixture_summary = _fixture_summary(fixture_config)
+    scope_config = _configure_scope_manifest(
+        scope_manifest=scope_manifest,
+        holdings_scope=holdings_scope,
+    )
+    scope_summary = _scope_summary(scope_config)
     registry_adapter = (
         entity_lookup
         or (fixture_config.registry_adapter if fixture_config is not None else None)
         or EntityRegistryAdapter()
     )
-    producer, adapter = build_read_only_producer(
-        duckdb_path,
-        registry_adapter=registry_adapter
+    producer_kwargs: dict[str, Any] = {
+        "registry_adapter": registry_adapter
         if isinstance(registry_adapter, EntityRegistryAdapter)
         else None,
-    )
+    }
+    if scope_config is not None:
+        producer_kwargs["holdings_scope"] = scope_config
+    producer, adapter = build_read_only_producer(duckdb_path, **producer_kwargs)
     try:
         result: ProducerResult = producer.build_payloads()
     except AdapterSchemaError:
         summary = _schema_failure_summary(mode=mode, run_id=run_id, adapter=adapter)
         summary.update(fixture_summary)
+        summary.update(scope_summary)
         return summary
 
     # Keep run-id generation and dry-run validation side-effect-free for callers.
@@ -659,6 +734,7 @@ def run_production_queue_submit(
         partial_submit_allowed=allow_partial_submit,
     )
     summary.update(fixture_summary)
+    summary.update(scope_summary)
     if mode == "readiness" or not summary["ready"]:
         return summary
 
@@ -786,6 +862,15 @@ def _parse_args() -> argparse.Namespace:
         ),
     )
     parser.add_argument(
+        "--scope-manifest",
+        type=Path,
+        default=None,
+        help=(
+            "Optional sanitized holdings scope JSON with manifest targets and "
+            "two-hop context refs; summary records counts only."
+        ),
+    )
+    parser.add_argument(
         "--run-id",
         default=None,
         help=(
@@ -810,6 +895,7 @@ def main() -> int:
             run_id=args.run_id,
             entity_registry_fixture=args.entity_registry_fixture,
             entity_registry_alias_map=args.entity_registry_alias_map,
+            scope_manifest=args.scope_manifest,
         )
     except ProductionRunnerError as exc:
         summary = {
