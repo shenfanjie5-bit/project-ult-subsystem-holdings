@@ -70,6 +70,13 @@ class ProductionRunnerError(RuntimeError):
         return self.reason
 
 
+@dataclass(frozen=True, slots=True)
+class EntityRegistryFixtureConfig:
+    alias_count: int
+    entity_ref_count: int
+    registry_adapter: EntityRegistryAdapter
+
+
 def _positive_int(value: str) -> int:
     parsed = int(value)
     if parsed <= 0:
@@ -82,6 +89,149 @@ def _non_negative_int(value: str) -> int:
     if parsed < 0:
         raise argparse.ArgumentTypeError("value must be zero or greater")
     return parsed
+
+
+def _normalize_fixture_alias(value: str) -> str:
+    return value.strip()
+
+
+def _load_json_object(path: Path) -> Mapping[str, Any]:
+    try:
+        payload = json.loads(path.read_text(encoding="utf-8"))
+    except OSError as exc:
+        raise ProductionRunnerError("entity_registry_fixture_unreadable", 2) from exc
+    except json.JSONDecodeError as exc:
+        raise ProductionRunnerError("entity_registry_fixture_invalid_json", 2) from exc
+    if not isinstance(payload, Mapping):
+        raise ProductionRunnerError("entity_registry_fixture_invalid_shape", 2)
+    return payload
+
+
+def _canonical_ref(value: Any) -> str:
+    if not isinstance(value, str) or not value.strip():
+        raise ProductionRunnerError("entity_registry_fixture_invalid_ref", 2)
+    ref = value.strip()
+    if not ref.startswith("ENT_"):
+        raise ProductionRunnerError("entity_registry_fixture_invalid_ref", 2)
+    return ref
+
+
+def _fixture_entity_ref(entry: Any) -> str:
+    if isinstance(entry, str):
+        return _canonical_ref(entry)
+    if isinstance(entry, Mapping):
+        for key in ("canonical_entity_id", "entity_id", "canonical_id", "ref"):
+            if key in entry:
+                return _canonical_ref(entry[key])
+    raise ProductionRunnerError("entity_registry_fixture_invalid_entity", 2)
+
+
+def _fixture_alias_pairs(payload: Mapping[str, Any]) -> tuple[tuple[str, str], ...]:
+    raw_aliases = payload.get("aliases", payload.get("alias_map"))
+    if raw_aliases is None:
+        raise ProductionRunnerError("entity_registry_fixture_missing_aliases", 2)
+
+    pairs: list[tuple[str, str]] = []
+    if isinstance(raw_aliases, Mapping):
+        for alias_text, canonical_entity_id in raw_aliases.items():
+            if not isinstance(alias_text, str) or not alias_text.strip():
+                raise ProductionRunnerError("entity_registry_fixture_invalid_alias", 2)
+            pairs.append(
+                (_normalize_fixture_alias(alias_text), _canonical_ref(canonical_entity_id))
+            )
+    elif isinstance(raw_aliases, Sequence) and not isinstance(
+        raw_aliases, (str, bytes, bytearray)
+    ):
+        for entry in raw_aliases:
+            if not isinstance(entry, Mapping):
+                raise ProductionRunnerError("entity_registry_fixture_invalid_alias", 2)
+            alias_text = entry.get("alias", entry.get("alias_text"))
+            if not isinstance(alias_text, str) or not alias_text.strip():
+                raise ProductionRunnerError("entity_registry_fixture_invalid_alias", 2)
+            canonical_entity_id = None
+            for key in ("canonical_entity_id", "entity_id", "canonical_id", "ref"):
+                if key in entry:
+                    canonical_entity_id = entry[key]
+                    break
+            pairs.append(
+                (_normalize_fixture_alias(alias_text), _canonical_ref(canonical_entity_id))
+            )
+    else:
+        raise ProductionRunnerError("entity_registry_fixture_invalid_aliases", 2)
+
+    seen_aliases: dict[str, str] = {}
+    for alias_text, canonical_entity_id in pairs:
+        previous = seen_aliases.get(alias_text)
+        if previous is not None and previous != canonical_entity_id:
+            raise ProductionRunnerError("entity_registry_fixture_ambiguous_alias", 2)
+        seen_aliases[alias_text] = canonical_entity_id
+    return tuple(sorted(seen_aliases.items()))
+
+
+def _fixture_entity_refs(payload: Mapping[str, Any]) -> tuple[str, ...]:
+    raw_refs = payload.get("entity_refs", payload.get("refs"))
+    if raw_refs is None:
+        raw_refs = payload.get("entities")
+    if raw_refs is None:
+        raise ProductionRunnerError("entity_registry_fixture_missing_refs", 2)
+    if not isinstance(raw_refs, Sequence) or isinstance(raw_refs, (str, bytes, bytearray)):
+        raise ProductionRunnerError("entity_registry_fixture_invalid_refs", 2)
+    refs = {_fixture_entity_ref(entry) for entry in raw_refs}
+    return tuple(sorted(refs))
+
+
+def _configure_entity_registry_fixture(path: Path) -> EntityRegistryFixtureConfig:
+    payload = _load_json_object(path)
+    alias_pairs = _fixture_alias_pairs(payload)
+    entity_refs = _fixture_entity_refs(payload)
+    entity_ref_set = set(entity_refs)
+    if any(canonical_entity_id not in entity_ref_set for _, canonical_entity_id in alias_pairs):
+        raise ProductionRunnerError("entity_registry_fixture_missing_ref", 2)
+
+    alias_map = dict(alias_pairs)
+
+    def lookup_alias(alias_text: str) -> Mapping[str, str] | None:
+        canonical_entity_id = alias_map.get(_normalize_fixture_alias(alias_text))
+        if canonical_entity_id is None:
+            return None
+        return {"canonical_entity_id": canonical_entity_id}
+
+    def lookup_entity_refs(refs: Iterable[str]) -> Mapping[str, bool]:
+        return {ref: ref in entity_ref_set for ref in refs}
+
+    registry_adapter = EntityRegistryAdapter(
+        lookup_alias_func=lookup_alias,
+        lookup_entity_refs_func=lookup_entity_refs,
+    )
+    return EntityRegistryFixtureConfig(
+        alias_count=len(alias_pairs),
+        entity_ref_count=len(entity_refs),
+        registry_adapter=registry_adapter,
+    )
+
+
+def _configure_explicit_entity_registry(
+    *,
+    fixture_path: Path | None,
+    alias_map_path: Path | None,
+    entity_lookup: EntityRegistryLookup | None,
+) -> EntityRegistryFixtureConfig | None:
+    provided_paths = tuple(path for path in (fixture_path, alias_map_path) if path is not None)
+    if len(provided_paths) > 1:
+        raise ProductionRunnerError("entity_registry_fixture_conflict", 2)
+    if provided_paths and entity_lookup is not None:
+        raise ProductionRunnerError("entity_registry_lookup_conflict", 2)
+    if not provided_paths:
+        return None
+    return _configure_entity_registry_fixture(provided_paths[0])
+
+
+def _fixture_summary(config: EntityRegistryFixtureConfig | None) -> dict[str, int | bool]:
+    return {
+        "entity_registry_fixture_configured": config is not None,
+        "entity_registry_fixture_alias_count": config.alias_count if config else 0,
+        "entity_registry_fixture_ref_count": config.entity_ref_count if config else 0,
+    }
 
 
 def resolve_duckdb_path(
@@ -441,6 +591,8 @@ def run_production_queue_submit(
     submit_candidate_func: Any | None = None,
     submit_candidate_idempotent_func: Any | None = None,
     entity_lookup: EntityRegistryLookup | None = None,
+    entity_registry_fixture: Path | None = None,
+    entity_registry_alias_map: Path | None = None,
 ) -> dict[str, Any]:
     runtime_env = env or os.environ
     if mode == "execute" and runtime_env.get(CONFIRM_ENV) != "1":
@@ -450,7 +602,17 @@ def run_production_queue_submit(
     if not duckdb_path.exists():
         raise ProductionRunnerError("duckdb_path_missing", 2)
 
-    registry_adapter = entity_lookup or EntityRegistryAdapter()
+    fixture_config = _configure_explicit_entity_registry(
+        fixture_path=entity_registry_fixture,
+        alias_map_path=entity_registry_alias_map,
+        entity_lookup=entity_lookup,
+    )
+    fixture_summary = _fixture_summary(fixture_config)
+    registry_adapter = (
+        entity_lookup
+        or (fixture_config.registry_adapter if fixture_config is not None else None)
+        or EntityRegistryAdapter()
+    )
     producer, adapter = build_read_only_producer(
         duckdb_path,
         registry_adapter=registry_adapter
@@ -460,7 +622,9 @@ def run_production_queue_submit(
     try:
         result: ProducerResult = producer.build_payloads()
     except AdapterSchemaError:
-        return _schema_failure_summary(mode=mode, run_id=run_id, adapter=adapter)
+        summary = _schema_failure_summary(mode=mode, run_id=run_id, adapter=adapter)
+        summary.update(fixture_summary)
+        return summary
 
     # Keep run-id generation and dry-run validation side-effect-free for callers.
     payloads = tuple(copy.deepcopy(dict(payload)) for payload in result.payloads)
@@ -494,6 +658,7 @@ def run_production_queue_submit(
         max_submit_mart_diagnostics=max_submit_mart_diagnostics,
         partial_submit_allowed=allow_partial_submit,
     )
+    summary.update(fixture_summary)
     if mode == "readiness" or not summary["ready"]:
         return summary
 
@@ -600,6 +765,24 @@ def _parse_args() -> argparse.Namespace:
         help="Optional path for sanitized summary JSON.",
     )
     parser.add_argument(
+        "--entity-registry-fixture",
+        type=Path,
+        default=None,
+        help=(
+            "Explicit JSON fixture that seeds entity-registry lookups for this "
+            "runner process only."
+        ),
+    )
+    parser.add_argument(
+        "--entity-registry-alias-map",
+        type=Path,
+        default=None,
+        help=(
+            "Explicit JSON alias map that seeds entity-registry lookups for this "
+            "runner process only."
+        ),
+    )
+    parser.add_argument(
         "--run-id",
         default=None,
         help="Optional external run id. Defaults to a stable payload hash.",
@@ -619,6 +802,8 @@ def main() -> int:
             max_unresolved_alignments=args.max_unresolved_alignments,
             max_submit_mart_diagnostics=args.max_submit_mart_diagnostics,
             run_id=args.run_id,
+            entity_registry_fixture=args.entity_registry_fixture,
+            entity_registry_alias_map=args.entity_registry_alias_map,
         )
     except ProductionRunnerError as exc:
         summary = {
