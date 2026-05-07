@@ -110,6 +110,12 @@ def _write_registry_fixture(
     return path
 
 
+def _write_json_fixture(tmp_path: Path, payload: Mapping[str, Any]) -> Path:
+    path = tmp_path / "entity-registry-alias-map.json"
+    path.write_text(json.dumps(payload, sort_keys=True), encoding="utf-8")
+    return path
+
+
 def test_readiness_ready_summary_is_sanitized(
     monkeypatch: pytest.MonkeyPatch,
     tmp_path: Path,
@@ -183,6 +189,78 @@ def test_readiness_with_entity_registry_fixture_builds_payloads(
     assert str(tmp_path) not in str(summary)
     assert "security-alpha" not in str(summary)
     assert "ENT_SECURITY_ALPHA" not in str(summary)
+
+
+def test_readiness_with_entity_registry_alias_map_sequence_builds_payloads(
+    monkeypatch: pytest.MonkeyPatch,
+    tmp_path: Path,
+) -> None:
+    runner = _load_runner()
+    fixture_path = _write_json_fixture(
+        tmp_path,
+        {
+            "alias_map": [
+                {"alias": " security-alpha ", "ref": "ENT_SECURITY_ALPHA"},
+                {
+                    "alias_text": "security-beta",
+                    "canonical_entity_id": "ENT_SECURITY_BETA",
+                },
+                {
+                    "alias": "northbound-holder",
+                    "entity_id": "ENT_NORTHBOUND_HOLDER",
+                },
+            ],
+            "entities": [
+                {"ref": "ENT_SECURITY_ALPHA"},
+                {"ref": "ENT_SECURITY_BETA"},
+                {"ref": "ENT_NORTHBOUND_HOLDER"},
+            ],
+        },
+    )
+    monkeypatch.setattr(
+        runner,
+        "build_read_only_producer",
+        _registry_backed_reader_factory(runner),
+    )
+
+    summary = runner.run_production_queue_submit(
+        _duckdb_placeholder(tmp_path),
+        mode="readiness",
+        entity_registry_alias_map=fixture_path,
+    )
+
+    assert summary["ready"] is True
+    assert summary["payload_count"] == 2
+    assert summary["relation_counts"] == {"CO_HOLDING": 1, "NORTHBOUND_HOLD": 1}
+    assert summary["entity_registry_fixture_alias_count"] == 3
+    assert summary["entity_registry_fixture_ref_count"] == 3
+    assert "security-alpha" not in str(summary)
+    assert "ENT_SECURITY_ALPHA" not in str(summary)
+
+
+def test_entity_registry_alias_map_ambiguous_alias_fails_closed(
+    tmp_path: Path,
+) -> None:
+    runner = _load_runner()
+    fixture_path = _write_json_fixture(
+        tmp_path,
+        {
+            "alias_map": [
+                {"alias": "security-alpha", "ref": "ENT_SECURITY_ALPHA"},
+                {"alias": "security-alpha", "ref": "ENT_SECURITY_BETA"},
+            ],
+            "entity_refs": ["ENT_SECURITY_ALPHA", "ENT_SECURITY_BETA"],
+        },
+    )
+
+    with pytest.raises(runner.ProductionRunnerError) as error:
+        runner.run_production_queue_submit(
+            _duckdb_placeholder(tmp_path),
+            mode="readiness",
+            entity_registry_alias_map=fixture_path,
+        )
+
+    assert error.value.reason == "entity_registry_fixture_ambiguous_alias"
 
 
 def test_readiness_without_entity_registry_fixture_fails_closed(

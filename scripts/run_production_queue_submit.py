@@ -730,7 +730,10 @@ def _parse_args() -> argparse.Namespace:
         "--mode",
         choices=("readiness", "execute"),
         default="readiness",
-        help="Run full production readiness or execute after readiness passes.",
+        help=(
+            "Run production readiness, or execute after readiness passes with "
+            "the idempotent queue backend available."
+        ),
     )
     parser.add_argument(
         "--max-payloads",
@@ -770,7 +773,7 @@ def _parse_args() -> argparse.Namespace:
         default=None,
         help=(
             "Explicit JSON fixture that seeds entity-registry lookups for this "
-            "runner process only."
+            "runner process only; aliases must point to listed ENT_ refs."
         ),
     )
     parser.add_argument(
@@ -778,14 +781,17 @@ def _parse_args() -> argparse.Namespace:
         type=Path,
         default=None,
         help=(
-            "Explicit JSON alias map that seeds entity-registry lookups for this "
-            "runner process only."
+            "Explicit JSON alias map using the same fixture schema; aliases "
+            "are not derived from refs."
         ),
     )
     parser.add_argument(
         "--run-id",
         default=None,
-        help="Optional external run id. Defaults to a stable payload hash.",
+        help=(
+            "Optional external run id for operator correlation only; this does "
+            "not override producer delta_id values."
+        ),
     )
     return parser.parse_args()
 
