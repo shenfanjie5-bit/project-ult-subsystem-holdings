@@ -3,7 +3,7 @@ PIP    := $(PYTHON) -m pip
 PYTEST := $(PYTHON) -m pytest
 
 CONTRACTS_PIN := git+https://github.com/shenfanjie5-bit/project-ult-contracts.git@v0.1.3
-SDK_PIN       := git+https://github.com/shenfanjie5-bit/project-ult-subsystem-sdk.git@v0.1.2
+SDK_PIN       := git+https://github.com/shenfanjie5-bit/project-ult-subsystem-sdk.git@v0.1.3
 
 .PHONY: help install-dev install-contracts-schemas test-fast contract test ci clean
 
