@@ -81,9 +81,18 @@ def _valid_payloads() -> tuple[dict[str, Any], ...]:
 
 
 def _registry_backed_reader_factory(runner: Any) -> Any:
-    def build(_duckdb_path: Path, *, registry_adapter: Any | None = None) -> Any:
+    def build(
+        _duckdb_path: Path,
+        *,
+        registry_adapter: Any | None = None,
+        holdings_scope: Any | None = None,
+    ) -> Any:
         return (
-            runner.HoldingsProducer(build_default_fake_reader(), registry_adapter),
+            runner.HoldingsProducer(
+                build_default_fake_reader(),
+                registry_adapter,
+                scope=holdings_scope,
+            ),
             _FakeAdapter(),
         )
 
@@ -113,6 +122,26 @@ def _write_registry_fixture(
 def _write_json_fixture(tmp_path: Path, payload: Mapping[str, Any]) -> Path:
     path = tmp_path / "entity-registry-alias-map.json"
     path.write_text(json.dumps(payload, sort_keys=True), encoding="utf-8")
+    return path
+
+
+def _write_scope_manifest(
+    tmp_path: Path,
+    *,
+    targets: tuple[str, ...],
+    context: tuple[str, ...] = (),
+) -> Path:
+    path = tmp_path / "holdings-scope.json"
+    path.write_text(
+        json.dumps(
+            {
+                "manifest_targets": list(targets),
+                "two_hop_context_entity_refs": list(context),
+            },
+            sort_keys=True,
+        ),
+        encoding="utf-8",
+    )
     return path
 
 
@@ -236,6 +265,108 @@ def test_readiness_with_entity_registry_alias_map_sequence_builds_payloads(
     assert summary["entity_registry_fixture_ref_count"] == 3
     assert "security-alpha" not in str(summary)
     assert "ENT_SECURITY_ALPHA" not in str(summary)
+
+
+def test_readiness_with_scope_manifest_summarizes_counts_without_refs(
+    monkeypatch: pytest.MonkeyPatch,
+    tmp_path: Path,
+) -> None:
+    runner = _load_runner()
+    fixture_path = _write_registry_fixture(
+        tmp_path,
+        aliases={
+            "security-alpha": "ENT_SECURITY_ALPHA",
+            "security-beta": "ENT_SECURITY_BETA",
+            "northbound-holder": "ENT_NORTHBOUND_HOLDER",
+        },
+        entity_refs=(
+            "ENT_SECURITY_ALPHA",
+            "ENT_SECURITY_BETA",
+            "ENT_NORTHBOUND_HOLDER",
+        ),
+    )
+    scope_path = _write_scope_manifest(
+        tmp_path,
+        targets=("ENT_SECURITY_ALPHA",),
+        context=("ENT_SECURITY_BETA",),
+    )
+    monkeypatch.setattr(
+        runner,
+        "build_read_only_producer",
+        _registry_backed_reader_factory(runner),
+    )
+
+    summary = runner.run_production_queue_submit(
+        _duckdb_placeholder(tmp_path),
+        mode="readiness",
+        entity_registry_fixture=fixture_path,
+        scope_manifest=scope_path,
+    )
+
+    assert summary["ready"] is True
+    assert summary["payload_count"] == 2
+    assert summary["scope_configured"] is True
+    assert summary["scope_manifest_target_count"] == 1
+    assert summary["scope_two_hop_context_count"] == 1
+    assert summary["scope_allowed_entity_count"] == 2
+    assert summary["scope_filtered_payload_count"] == 0
+    assert summary["scope_decision_target_payload_count"] == 2
+    assert summary["scope_graph_risk_context_payload_count"] == 0
+    assert str(tmp_path) not in str(summary)
+    assert "ENT_SECURITY_ALPHA" not in str(summary)
+    assert "holdings-scope" not in str(summary)
+
+
+def test_readiness_scope_manifest_filters_outside_context_fail_closed(
+    monkeypatch: pytest.MonkeyPatch,
+    tmp_path: Path,
+) -> None:
+    runner = _load_runner()
+    fixture_path = _write_registry_fixture(
+        tmp_path,
+        aliases={
+            "security-alpha": "ENT_SECURITY_ALPHA",
+            "security-beta": "ENT_SECURITY_BETA",
+            "northbound-holder": "ENT_NORTHBOUND_HOLDER",
+        },
+        entity_refs=(
+            "ENT_SECURITY_ALPHA",
+            "ENT_SECURITY_BETA",
+            "ENT_NORTHBOUND_HOLDER",
+        ),
+    )
+    scope_path = _write_scope_manifest(
+        tmp_path,
+        targets=("ENT_SECURITY_BETA",),
+    )
+    monkeypatch.setattr(
+        runner,
+        "build_read_only_producer",
+        _registry_backed_reader_factory(runner),
+    )
+
+    summary = runner.run_production_queue_submit(
+        _duckdb_placeholder(tmp_path),
+        mode="readiness",
+        entity_registry_fixture=fixture_path,
+        scope_manifest=scope_path,
+    )
+
+    assert summary["ready"] is False
+    assert summary["reason"] == "no_payloads"
+    assert summary["payload_count"] == 0
+    assert summary["audit_counts"] == {
+        "scope_filtered": 2,
+        "read_only_input": 1,
+    }
+    assert summary["scope_configured"] is True
+    assert summary["scope_manifest_target_count"] == 1
+    assert summary["scope_two_hop_context_count"] == 0
+    assert summary["scope_filtered_payload_count"] == 2
+    assert summary["scope_decision_target_payload_count"] == 0
+    assert summary["scope_graph_risk_context_payload_count"] == 0
+    assert str(tmp_path) not in str(summary)
+    assert "ENT_SECURITY_BETA" not in str(summary)
 
 
 def test_entity_registry_alias_map_ambiguous_alias_fails_closed(

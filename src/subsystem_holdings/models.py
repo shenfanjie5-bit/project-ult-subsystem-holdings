@@ -5,7 +5,12 @@ from datetime import datetime
 from typing import Any, Literal, Mapping, TypeAlias
 
 RelationType: TypeAlias = Literal["CO_HOLDING", "NORTHBOUND_HOLD"]
-AuditReason: TypeAlias = Literal["unresolved_holder", "unresolved_security", "read_only_input"]
+AuditReason: TypeAlias = Literal[
+    "unresolved_holder",
+    "unresolved_security",
+    "read_only_input",
+    "scope_filtered",
+]
 ZScoreMetric: TypeAlias = Literal["holding_amount", "holding_ratio"]
 
 

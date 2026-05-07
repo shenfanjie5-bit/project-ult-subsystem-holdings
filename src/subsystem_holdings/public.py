@@ -10,6 +10,11 @@ from subsystem_holdings.entity_registry_adapter import EntityRegistryAdapter
 from subsystem_holdings.mart_adapter import AdapterDiagnostic, ReadOnlyMartAdapter
 from subsystem_holdings.producer import HoldingsProducer
 from subsystem_holdings.reader import FakeHoldingsMartReader, build_default_fake_reader
+from subsystem_holdings.scope import (
+    HoldingsScope,
+    holdings_scope_from_manifest,
+    load_scope_manifest,
+)
 
 
 def build_default_offline_producer() -> HoldingsProducer:
@@ -34,9 +39,12 @@ __all__ = [
     "AdapterDiagnostic",
     "FakeHoldingsMartReader",
     "HoldingsProducer",
+    "HoldingsScope",
     "ReadOnlyMartAdapter",
     "build_default_aligner",
     "build_default_fake_reader",
     "build_default_offline_producer",
     "build_mock_submit_client",
+    "holdings_scope_from_manifest",
+    "load_scope_manifest",
 ]

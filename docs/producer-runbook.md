@@ -16,6 +16,9 @@ execute checks only.
 - Do not add subtypes, create financial-doc output, add
   `MAJOR_CUSTOMER` or `MAJOR_SUPPLIER`, or claim default propagation, full
   propagation, or broad rollout completion from this repo.
+- When `--scope-manifest` is provided, use canonical manifest target refs plus
+  two-hop context refs only. Two-hop associated companies are graph/risk context;
+  they must not be counted as decision targets.
 
 ## Entity Registry Fixture And Alias Map
 
@@ -70,6 +73,42 @@ Handling rules:
   inputs, or a fixture plus injected entity lookup fail closed before
   readiness.
 
+## Holdings Scope Manifest
+
+The runner can constrain producer output with `--scope-manifest`. This is a
+small sanitized JSON file that names canonical manifest targets and optional
+two-hop context refs. It is not a publish manifest and must not contain raw
+provider rows, paths, aliases, tokens, or local execution details.
+
+Accepted JSON shape:
+
+```json
+{
+  "manifest_targets": ["ENT_SECURITY_ALPHA"],
+  "two_hop_context_entity_refs": ["ENT_SECURITY_BETA"]
+}
+```
+
+Equivalent nested shapes under `holdings_scope` or `scope` are accepted when
+the values are canonical `ENT_` refs or objects with `ref`, `entity_id`, or
+`canonical_entity_id`. Alias strings such as `security-alpha` fail closed with
+`holdings_scope_manifest_invalid_ref`.
+
+Filtering rules:
+
+- `CO_HOLDING` rows are submitted only when both security endpoints are inside
+  the manifest target plus two-hop context set.
+- `NORTHBOUND_HOLD` rows are submitted only when the target security is inside
+  that set. The northbound holder source is graph context and never becomes a
+  decision target.
+- Rows filtered by scope are not submitted. They are counted through
+  `audit_counts.scope_filtered` and `scope_filtered_payload_count`.
+- Included payloads carry only role metadata in `producer_context`; summaries
+  expose counts only: `scope_configured`, `scope_manifest_target_count`,
+  `scope_two_hop_context_count`, `scope_allowed_entity_count`,
+  `scope_decision_target_payload_count`, and
+  `scope_graph_risk_context_payload_count`.
+
 ## Readiness Command
 
 Use readiness first. It builds producer payloads, runs production entity
@@ -80,6 +119,7 @@ python scripts/run_production_queue_submit.py \
   --duckdb-path <verified-holdings-marts.duckdb> \
   --mode readiness \
   --entity-registry-fixture <entity-registry-fixture.json> \
+  --scope-manifest <holdings-scope.json> \
   --summary-json <sanitized-summary.json>
 ```
 
@@ -102,6 +142,7 @@ python scripts/run_production_queue_submit.py \
   --max-payloads <positive-count> \
   --allow-partial-submit \
   --entity-registry-fixture <entity-registry-fixture.json> \
+  --scope-manifest <holdings-scope.json> \
   --summary-json <sanitized-summary.json>
 ```
 
@@ -150,6 +191,9 @@ Common interpretations:
   submit.
 - `data_platform_queue_idempotent_submit_unavailable`: execute did not submit
   because the required idempotent backend path is unavailable.
+- `scope_filtered`: producer rows were outside the manifest target plus
+  two-hop context scope. Check only the sanitized scope counters; do not copy
+  manifest contents or entity refs into evidence.
 
 `read_only_input` audit records and `top_holder_diagnostic_count` are not submit
 blockers by default because top-holder rows are audit-only. They still require

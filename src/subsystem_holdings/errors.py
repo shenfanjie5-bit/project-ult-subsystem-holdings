@@ -16,3 +16,11 @@ class AdapterError(HoldingsError):
 
 class AdapterSchemaError(AdapterError):
     """Raised when a configured mart table is missing required fields."""
+
+
+class ScopeManifestError(HoldingsError):
+    """Raised when a holdings scope manifest cannot be used safely."""
+
+    def __init__(self, reason: str) -> None:
+        super().__init__(reason)
+        self.reason = reason
