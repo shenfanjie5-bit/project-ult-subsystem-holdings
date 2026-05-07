@@ -31,6 +31,7 @@ from subsystem_sdk.validate.preflight import EntityRegistryLookup, run_entity_pr
 
 CONFIRM_ENV = "SUBSYSTEM_HOLDINGS_PRODUCTION_QUEUE_SUBMIT_CONFIRM"
 DUCKDB_PATH_ENV = "DP_DUCKDB_PATH"
+IDEMPOTENT_BACKEND_LIMITATION = "data_platform_queue_idempotent_submit_unavailable"
 
 Mode = Literal["readiness", "execute"]
 
@@ -180,6 +181,40 @@ def _receipt_summary(receipts: Sequence[Any], *, prefix: str = "") -> dict[str, 
     }
 
 
+def _idempotent_capability_summary(*, supported: bool) -> dict[str, Any]:
+    return {
+        "idempotent_safe_receipt_supported": supported,
+        "submit_backend_limitations": []
+        if supported
+        else [IDEMPOTENT_BACKEND_LIMITATION],
+    }
+
+
+def _confirm_idempotent_submit_capability(submit_client: Any) -> bool:
+    backend = getattr(submit_client, "backend", None)
+    if getattr(backend, "backend_kind", None) != "data_platform_queue":
+        return False
+    if getattr(backend, "_idempotent_required", False) is not True:
+        return False
+
+    resolve_idempotent = getattr(backend, "_resolve_submit_candidate_idempotent", None)
+    if not callable(resolve_idempotent):
+        return False
+    try:
+        resolve_idempotent()
+    except Exception:  # noqa: BLE001 - missing live/idempotent API must fail closed.
+        return False
+    return True
+
+
+def _reject_missing_idempotent_capability(summary: dict[str, Any]) -> dict[str, Any]:
+    summary["ready"] = False
+    summary["submitted"] = False
+    summary["reason"] = IDEMPOTENT_BACKEND_LIMITATION
+    summary.update(_idempotent_capability_summary(supported=False))
+    return summary
+
+
 def _production_preflight_summary(
     payloads: Sequence[Mapping[str, Any]],
     *,
@@ -312,9 +347,8 @@ def _schema_failure_summary(
             diagnostics,
             TOP_HOLDER_DIAGNOSTIC_TABLES,
         ),
-        "idempotent_safe_receipt_supported": False,
-        "submit_backend_limitations": ["sdk_data_platform_queue_idempotent_not_exposed"],
     }
+    summary.update(_idempotent_capability_summary(supported=True))
     summary.update(_receipt_summary((), prefix="preflight_"))
     summary.update(_receipt_summary(()))
     return summary
@@ -383,9 +417,8 @@ def _build_readiness_summary(
         "adapter_diagnostic_counts": _diagnostic_counts(diagnostics),
         "submit_mart_diagnostic_count": submit_mart_diagnostic_count,
         "top_holder_diagnostic_count": top_holder_diagnostic_count,
-        "idempotent_safe_receipt_supported": False,
-        "submit_backend_limitations": ["sdk_data_platform_queue_idempotent_not_exposed"],
     }
+    summary.update(_idempotent_capability_summary(supported=True))
     if reasons:
         summary["reason"] = reasons[0]
         summary["reasons"] = list(reasons)
@@ -406,6 +439,7 @@ def run_production_queue_submit(
     run_id: str | None = None,
     env: Mapping[str, str] | None = None,
     submit_candidate_func: Any | None = None,
+    submit_candidate_idempotent_func: Any | None = None,
     entity_lookup: EntityRegistryLookup | None = None,
 ) -> dict[str, Any]:
     runtime_env = env or os.environ
@@ -463,6 +497,19 @@ def run_production_queue_submit(
     if mode == "readiness" or not summary["ready"]:
         return summary
 
+    try:
+        submit_client = build_data_platform_queue_submit_client(
+            submit_candidate_func=submit_candidate_func,
+            submit_candidate_idempotent_func=submit_candidate_idempotent_func,
+            entity_lookup=lookup,
+            entity_preflight_profile="production",
+            idempotent_required=True,
+        )
+    except RuntimeError:
+        return _reject_missing_idempotent_capability(summary)
+    if not _confirm_idempotent_submit_capability(submit_client):
+        return _reject_missing_idempotent_capability(summary)
+
     selected_preflight = _production_preflight_summary(selected_payloads, lookup=lookup)
     if selected_preflight["preflight_blocked_count"]:
         summary["ready"] = False
@@ -472,11 +519,6 @@ def run_production_queue_submit(
         ]
         return summary
 
-    submit_client = build_data_platform_queue_submit_client(
-        submit_candidate_func=submit_candidate_func,
-        entity_lookup=lookup,
-        entity_preflight_profile="production",
-    )
     receipts = tuple(submit_client.submit(payload) for payload in selected_payloads)
     summary["submitted"] = True
     summary.update(_receipt_summary(receipts))

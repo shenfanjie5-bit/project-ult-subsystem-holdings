@@ -5,6 +5,7 @@ import importlib.util
 import sys
 from dataclasses import dataclass, field
 from pathlib import Path
+from types import SimpleNamespace
 from typing import Any, Mapping
 
 import pytest
@@ -105,7 +106,8 @@ def test_readiness_ready_summary_is_sanitized(
     assert summary["preflight_accepted_receipt_count"] == 2
     assert summary["receipt_count"] == 0
     assert summary["relation_counts"] == {"CO_HOLDING": 1, "NORTHBOUND_HOLD": 1}
-    assert summary["idempotent_safe_receipt_supported"] is False
+    assert summary["idempotent_safe_receipt_supported"] is True
+    assert summary["submit_backend_limitations"] == []
     assert str(tmp_path) not in summary_text
     assert "delta_id" not in summary_text
     assert "source_node" not in summary_text
@@ -311,7 +313,9 @@ def test_execute_success_requires_all_selected_receipts_accepted(
     )
     captured: list[dict[str, Any]] = []
 
-    def record_submit_candidate(payload: Mapping[str, Any]) -> Mapping[str, Any]:
+    def record_submit_candidate_idempotent(
+        payload: Mapping[str, Any],
+    ) -> Mapping[str, Any]:
         captured.append(dict(payload))
         return {"id": f"candidate-{len(captured)}"}
 
@@ -320,11 +324,13 @@ def test_execute_success_requires_all_selected_receipts_accepted(
         mode="execute",
         env={runner.CONFIRM_ENV: "1"},
         entity_lookup=_EntityLookup(),
-        submit_candidate_func=record_submit_candidate,
+        submit_candidate_idempotent_func=record_submit_candidate_idempotent,
     )
 
     assert summary["ready"] is True
     assert summary["submitted"] is True
+    assert summary["idempotent_safe_receipt_supported"] is True
+    assert summary["submit_backend_limitations"] == []
     assert summary["receipt_count"] == 2
     assert summary["accepted_receipt_count"] == 2
     assert summary["receipt_backend_kinds"] == ["data_platform_queue"]
@@ -332,3 +338,131 @@ def test_execute_success_requires_all_selected_receipts_accepted(
     assert {"ex_type", "produced_at", "submitted_at", "ingest_seq"}.isdisjoint(
         captured[0]
     )
+
+
+def test_execute_missing_sdk_idempotent_api_fails_closed_before_submit(
+    monkeypatch: pytest.MonkeyPatch,
+    tmp_path: Path,
+) -> None:
+    runner = _load_runner()
+    payloads = _valid_payloads()
+    monkeypatch.setattr(
+        runner,
+        "build_read_only_producer",
+        lambda *_args, **_kwargs: (_FakeProducer(payloads), _FakeAdapter()),
+    )
+
+    from subsystem_sdk.backends import data_platform_queue as queue_backend_module
+
+    legacy_calls: list[dict[str, Any]] = []
+
+    def legacy_submit_candidate(payload: Mapping[str, Any]) -> Mapping[str, Any]:
+        legacy_calls.append(dict(payload))
+        return {"id": "legacy-must-not-submit"}
+
+    monkeypatch.setattr(
+        queue_backend_module,
+        "import_module",
+        lambda _name: SimpleNamespace(submit_candidate=legacy_submit_candidate),
+    )
+
+    summary = runner.run_production_queue_submit(
+        _duckdb_placeholder(tmp_path),
+        mode="execute",
+        env={runner.CONFIRM_ENV: "1"},
+        entity_lookup=_EntityLookup(),
+        submit_candidate_func=legacy_submit_candidate,
+    )
+
+    assert summary["ready"] is False
+    assert summary["submitted"] is False
+    assert summary["reason"] == runner.IDEMPOTENT_BACKEND_LIMITATION
+    assert summary["idempotent_safe_receipt_supported"] is False
+    assert summary["submit_backend_limitations"] == [runner.IDEMPOTENT_BACKEND_LIMITATION]
+    assert summary["receipt_count"] == 0
+    assert legacy_calls == []
+
+
+def test_execute_idempotent_safe_receipt_summary_is_sanitized(
+    monkeypatch: pytest.MonkeyPatch,
+    tmp_path: Path,
+) -> None:
+    runner = _load_runner()
+    payloads = _valid_payloads()
+    monkeypatch.setattr(
+        runner,
+        "build_read_only_producer",
+        lambda *_args, **_kwargs: (_FakeProducer(payloads), _FakeAdapter()),
+    )
+
+    class SafeReceipt:
+        candidate_id = 321
+        replayed = True
+
+        def as_public_dict(self) -> dict[str, Any]:
+            return {
+                "candidate_id": self.candidate_id,
+                "submitted_at": "2026-03-31T08:00:00+00:00",
+                "ingest_seq": 456,
+                "validation_status": "pending",
+                "rejection_reason": None,
+                "replayed": self.replayed,
+                "payload": {"delta_id": "private-delta"},
+                "raw_payload_path": "/tmp/private.json",
+            }
+
+    captured: list[dict[str, Any]] = []
+
+    def idempotent_submit(payload: Mapping[str, Any]) -> SafeReceipt:
+        captured.append(dict(payload))
+        return SafeReceipt()
+
+    summary = runner.run_production_queue_submit(
+        _duckdb_placeholder(tmp_path),
+        mode="execute",
+        max_payloads=1,
+        allow_partial_submit=True,
+        env={runner.CONFIRM_ENV: "1"},
+        entity_lookup=_EntityLookup(),
+        submit_candidate_idempotent_func=idempotent_submit,
+    )
+
+    assert summary["ready"] is True
+    assert summary["submitted"] is True
+    assert summary["selected_payload_count"] == 1
+    assert summary["receipt_count"] == 1
+    assert summary["accepted_receipt_count"] == 1
+    assert summary["receipt_warning_count"] >= 1
+    assert summary["receipt_transport_ref_count"] == 1
+    assert len(captured) == 1
+    assert captured[0]["payload_type"] == "Ex-3"
+    assert captured[0]["submitted_by"] == "subsystem-holdings"
+    assert {"ex_type", "produced_at", "submitted_at", "ingest_seq"}.isdisjoint(
+        captured[0]
+    )
+    assert "private-delta" not in str(summary)
+    assert "/tmp/private.json" not in str(summary)
+
+
+def test_execute_partial_submit_requires_explicit_allowance(
+    monkeypatch: pytest.MonkeyPatch,
+    tmp_path: Path,
+) -> None:
+    runner = _load_runner()
+
+    def fail_if_called(*_args: Any, **_kwargs: Any) -> Any:
+        raise AssertionError("partial execute gate must run before mart reads")
+
+    monkeypatch.setattr(runner, "build_read_only_producer", fail_if_called)
+
+    with pytest.raises(runner.ProductionRunnerError) as error:
+        runner.run_production_queue_submit(
+            _duckdb_placeholder(tmp_path),
+            mode="execute",
+            max_payloads=1,
+            env={runner.CONFIRM_ENV: "1"},
+            entity_lookup=_EntityLookup(),
+            submit_candidate_idempotent_func=lambda _: {"id": "must-not-submit"},
+        )
+
+    assert error.value.reason == "partial_execute_not_allowed"
