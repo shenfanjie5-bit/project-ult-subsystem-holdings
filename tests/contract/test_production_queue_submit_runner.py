@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import copy
 import importlib.util
+import json
 import sys
 from dataclasses import dataclass, field
 from pathlib import Path
@@ -17,7 +18,7 @@ from subsystem_holdings.mart_adapter import (
     AdapterDiagnostic,
 )
 from subsystem_holdings.models import AuditRecord, ProducerResult
-from subsystem_holdings.public import build_default_offline_producer
+from subsystem_holdings.public import build_default_fake_reader, build_default_offline_producer
 
 
 def _load_runner() -> Any:
@@ -79,6 +80,36 @@ def _valid_payloads() -> tuple[dict[str, Any], ...]:
     return tuple(dict(payload) for payload in result.payloads)
 
 
+def _registry_backed_reader_factory(runner: Any) -> Any:
+    def build(_duckdb_path: Path, *, registry_adapter: Any | None = None) -> Any:
+        return (
+            runner.HoldingsProducer(build_default_fake_reader(), registry_adapter),
+            _FakeAdapter(),
+        )
+
+    return build
+
+
+def _write_registry_fixture(
+    tmp_path: Path,
+    *,
+    aliases: Mapping[str, str],
+    entity_refs: tuple[str, ...],
+) -> Path:
+    path = tmp_path / "entity-registry-fixture.json"
+    path.write_text(
+        json.dumps(
+            {
+                "aliases": dict(aliases),
+                "entity_refs": list(entity_refs),
+            },
+            sort_keys=True,
+        ),
+        encoding="utf-8",
+    )
+    return path
+
+
 def test_readiness_ready_summary_is_sanitized(
     monkeypatch: pytest.MonkeyPatch,
     tmp_path: Path,
@@ -111,6 +142,139 @@ def test_readiness_ready_summary_is_sanitized(
     assert str(tmp_path) not in summary_text
     assert "delta_id" not in summary_text
     assert "source_node" not in summary_text
+
+
+def test_readiness_with_entity_registry_fixture_builds_payloads(
+    monkeypatch: pytest.MonkeyPatch,
+    tmp_path: Path,
+) -> None:
+    runner = _load_runner()
+    fixture_path = _write_registry_fixture(
+        tmp_path,
+        aliases={
+            "security-alpha": "ENT_SECURITY_ALPHA",
+            "security-beta": "ENT_SECURITY_BETA",
+            "northbound-holder": "ENT_NORTHBOUND_HOLDER",
+        },
+        entity_refs=(
+            "ENT_SECURITY_ALPHA",
+            "ENT_SECURITY_BETA",
+            "ENT_NORTHBOUND_HOLDER",
+        ),
+    )
+    monkeypatch.setattr(
+        runner,
+        "build_read_only_producer",
+        _registry_backed_reader_factory(runner),
+    )
+
+    summary = runner.run_production_queue_submit(
+        _duckdb_placeholder(tmp_path),
+        mode="readiness",
+        entity_registry_fixture=fixture_path,
+    )
+
+    assert summary["ready"] is True
+    assert summary["payload_count"] == 2
+    assert summary["preflight_accepted_receipt_count"] == 2
+    assert summary["entity_registry_fixture_configured"] is True
+    assert summary["entity_registry_fixture_alias_count"] == 3
+    assert summary["entity_registry_fixture_ref_count"] == 3
+    assert str(tmp_path) not in str(summary)
+    assert "security-alpha" not in str(summary)
+    assert "ENT_SECURITY_ALPHA" not in str(summary)
+
+
+def test_readiness_without_entity_registry_fixture_fails_closed(
+    monkeypatch: pytest.MonkeyPatch,
+    tmp_path: Path,
+) -> None:
+    runner = _load_runner()
+    monkeypatch.setattr(
+        runner,
+        "build_read_only_producer",
+        _registry_backed_reader_factory(runner),
+    )
+
+    summary = runner.run_production_queue_submit(
+        _duckdb_placeholder(tmp_path),
+        mode="readiness",
+    )
+
+    assert summary["ready"] is False
+    assert summary["reason"] == "no_payloads"
+    assert summary["payload_count"] == 0
+    assert summary["audit_counts"] == {
+        "unresolved_holder": 1,
+        "unresolved_security": 1,
+        "read_only_input": 1,
+    }
+    assert summary["entity_registry_fixture_configured"] is False
+    assert summary["entity_registry_fixture_alias_count"] == 0
+    assert summary["entity_registry_fixture_ref_count"] == 0
+
+
+def test_entity_registry_fixture_missing_ref_fails_before_readiness(
+    tmp_path: Path,
+) -> None:
+    runner = _load_runner()
+    fixture_path = _write_registry_fixture(
+        tmp_path,
+        aliases={
+            "security-alpha": "ENT_SECURITY_ALPHA",
+            "security-beta": "ENT_SECURITY_BETA",
+        },
+        entity_refs=("ENT_SECURITY_ALPHA",),
+    )
+
+    with pytest.raises(runner.ProductionRunnerError) as error:
+        runner.run_production_queue_submit(
+            _duckdb_placeholder(tmp_path),
+            mode="readiness",
+            entity_registry_alias_map=fixture_path,
+        )
+
+    assert error.value.reason == "entity_registry_fixture_missing_ref"
+
+
+def test_entity_registry_fixture_does_not_self_normalize_from_refs(
+    monkeypatch: pytest.MonkeyPatch,
+    tmp_path: Path,
+) -> None:
+    runner = _load_runner()
+    fixture_path = _write_registry_fixture(
+        tmp_path,
+        aliases={
+            "security-beta": "ENT_SECURITY_BETA",
+            "northbound-holder": "ENT_NORTHBOUND_HOLDER",
+        },
+        entity_refs=(
+            "ENT_SECURITY_ALPHA",
+            "ENT_SECURITY_BETA",
+            "ENT_NORTHBOUND_HOLDER",
+        ),
+    )
+    monkeypatch.setattr(
+        runner,
+        "build_read_only_producer",
+        _registry_backed_reader_factory(runner),
+    )
+
+    summary = runner.run_production_queue_submit(
+        _duckdb_placeholder(tmp_path),
+        mode="readiness",
+        entity_registry_fixture=fixture_path,
+    )
+
+    assert summary["ready"] is False
+    assert summary["reason"] == "no_payloads"
+    assert summary["payload_count"] == 0
+    assert summary["audit_counts"] == {
+        "unresolved_security": 2,
+        "read_only_input": 1,
+    }
+    assert summary["entity_registry_fixture_alias_count"] == 2
+    assert summary["entity_registry_fixture_ref_count"] == 3
 
 
 def test_execute_missing_preflight_ref_does_not_call_real_backend(
